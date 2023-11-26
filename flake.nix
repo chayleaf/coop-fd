@@ -13,8 +13,6 @@
     inherit (nixpkgs) lib;
     mkPkgs = pkgs: let
       craneLib = (crane.mkLib pkgs);
-      clang = pkgs.clang;
-      libclang = pkgs.libclang.lib;
     in {
       default = craneLib.buildPackage {
         pname = "coop-ofd";
@@ -26,14 +24,8 @@
             || lib.hasSuffix ".map" path
             || craneLib.filterCargoSources path type;
         };
-        # pkgs/build-support/rust/hooks/rust-bindgen-hook.sh
-        # seemingly crane doesn't use it by default?
-        preBuild = ''
-          export LIBCLANG_PATH="${libclang}/lib";
-          export BINDGEN_EXTRA_CLANG_ARGS="$(< ${clang}/nix-support/cc-cflags) $(< ${clang}/nix-support/libc-cflags) $(< ${clang}/nix-support/libcxx-cxxflags) $NIX_CFLAGS_COMPILE"
-        '';
-        nativeBuildInputs = with pkgs; [ pkg-config ];
-        buildInputs = [ libclang ] ++ (with pkgs; [ tesseract leptonica ]);
+        nativeBuildInputs = with pkgs; [ pkg-config rustPlatform.bindgenHook ];
+        buildInputs = with pkgs; [ tesseract leptonica ];
       };
     };
   in {
