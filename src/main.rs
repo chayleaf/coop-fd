@@ -397,6 +397,9 @@ struct Transaction {
     #[serde(with = "iso8601")]
     date: chrono::DateTime<Utc>,
     meta: Option<TransactionMeta>,
+    /// This is redundant, and I store this just in case the FS breaks and I lose files or something
+    #[serde(default)]
+    prev_state: Option<HashMap<String, i64>>,
 }
 
 impl Transaction {
@@ -404,6 +407,7 @@ impl Transaction {
         Self {
             balance_changes: HashMap::new(),
             date: chrono::Utc::now(),
+            prev_state: None,
             meta,
         }
     }
@@ -418,11 +422,13 @@ impl Transaction {
 
 static BALANCE: OnceCell<RwLock<HashMap<String, i64>>> = OnceCell::const_new();
 
-async fn add_transaction(config: &Config, tr: Transaction) -> HashMap<String, i64> {
+async fn add_transaction(config: &Config, mut tr: Transaction) -> HashMap<String, i64> {
     let mut lock = BALANCE.get().unwrap().write().await;
     if tr.balance_changes.is_empty() {
         return lock.clone();
     }
+    tr.date = chrono::Utc::now();
+    tr.prev_state = Some(lock.clone());
     let mut path = config.data_path.clone();
     path.push("transactions");
     path.push(
