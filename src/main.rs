@@ -665,21 +665,38 @@ async fn main() {
         )
         .route(
             "/pay",
-            axum::routing::post(|axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| async move {
-                (
-                    [(
-                        axum::http::header::CONTENT_TYPE,
-                        axum::http::HeaderValue::from_static("application/json"),
-                    )],
-                    {
-                        if let Some(from) = f.get("from") {
+            axum::routing::post(|axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
+                let config = config.clone();
+                async move {
+                    (
+                        [(
+                            axum::http::header::CONTENT_TYPE,
+                            axum::http::HeaderValue::from_static("application/json"),
+                        )],
+                        {
                             if let Some(to) = f.get("to") {
                                 if let Some(amt) = f.get("amount") {
                                     if let Ok(amt) = amt.parse::<i64>() {
-                                        let mut tr = Transaction::new(None);
-                                        tr.pay(from, to, amt);
-                                        tr.finalize();
-                                        serde_json::to_string(&add_transaction(tr).await).expect("balance serialization failed")
+                                        if let Some(from) = f.get("from") {
+                                            let mut tr = Transaction::new(None);
+                                            tr.pay(from, to, amt);
+                                            tr.finalize();
+                                            serde_json::to_string(&add_transaction(tr).await).expect("balance serialization failed")
+                                        } else {
+                                            let mut tr = Transaction::new(None);
+                                            let total = amt;
+                                            for user in &config.usernames {
+                                                if user != to {
+                                                    tr.pay(
+                                                        user,
+                                                        to,
+                                                        total / i64::try_from(config.usernames.len()).expect("usize->i64 conversion failed"),
+                                                    );
+                                                }
+                                            }
+                                            tr.finalize();
+                                            serde_json::to_string(&add_transaction(tr).await).expect("balance serialization failed")
+                                        }
                                     } else {
                                         "invalid amount".to_owned()
                                     }
@@ -689,12 +706,10 @@ async fn main() {
                             } else {
                                 "missing to".to_owned()
                             }
-                        } else {
-                            "missing from".to_owned()
                         }
-                    }
-                )
-                    .into_response()
+                    )
+                        .into_response()
+                }
             })
         )
         .route(
