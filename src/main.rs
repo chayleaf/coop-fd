@@ -415,6 +415,7 @@ async fn add_transaction(config: &Config, tr: Transaction) -> HashMap<String, i6
     path.push("transactions");
     path.push(
         tr.date.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+            + "_"
             + &uuid::Uuid::new_v4().to_string()
             + ".json",
     );
@@ -666,7 +667,7 @@ async fn main() {
             })
         )
         .route(
-            "/balance",
+            "/api/balance",
             axum::routing::get(|| async {
                 (
                     [(
@@ -679,7 +680,7 @@ async fn main() {
             })
         )
         .route(
-            "/pay",
+            "/api/pay",
             axum::routing::post(|axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
                 let config = copy_ref(config);
                 async move {

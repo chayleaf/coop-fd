@@ -33,7 +33,7 @@
           export BINDGEN_EXTRA_CLANG_ARGS="$(< ${clang}/nix-support/cc-cflags) $(< ${clang}/nix-support/libc-cflags) $(< ${clang}/nix-support/libcxx-cxxflags) $NIX_CFLAGS_COMPILE"
         '';
         nativeBuildInputs = with pkgs; [ pkg-config ];
-        buildInputs = [ libclang ] ++ (with pkgs; [ glibc.dev tesseract leptonica ]);
+        buildInputs = [ libclang ] ++ (with pkgs; [ tesseract leptonica ]);
       };
     };
   in {

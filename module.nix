@@ -16,6 +16,10 @@ in
     config = lib.mkOption {
       type = lib.types.submodule {
         freeformType = format.type;
+        options.data_path = lib.mkOption {
+          type = lib.types.path;
+          default = "/var/lib/coop-ofd";
+        };
       };
     };
   };
