@@ -565,7 +565,7 @@ async fn main() {
                                         done = true;
                                         document.cookie = 'username=' + username;
                                         console.log('decoded qr code:', result.data)
-                                        document.location = "/add?" + result.data;
+                                        document.location = "add?" + result.data;
                                       }}
                                     }}, {{
                                       returnDetailedScanResult: true,
