@@ -1,0 +1,9 @@
+/target
+/ignore
+/data
+result
+result-*
+config.json
+*.jpg
+*.jpeg
+*.gif
