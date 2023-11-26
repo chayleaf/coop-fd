@@ -9,7 +9,7 @@
     flake = false;
   };
 
-  outputs = { self, crane, nixpkgs, ... }: let
+  outputs = { crane, nixpkgs, ... }: let
     inherit (nixpkgs) lib;
     mkPkgs = pkgs: let
       craneLib = (crane.mkLib pkgs);
