@@ -4,6 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::CStr,
     path::PathBuf,
+    sync::Arc,
 };
 
 use axum::response::IntoResponse;
@@ -205,10 +206,9 @@ fn parse(data: &str, ret: &mut Receipt) -> Option<()> {
     Some(())
 }
 
-async fn fetch(rec: &mut Receipt) -> reqwest::Result<bool> {
+async fn fetch(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
     if !rec.r#fn.is_empty() {
-        let mut path = PathBuf::new();
-        path.push("data");
+        let mut path = config.data_path.clone();
         path.push("parsed");
         path.push(rec.r#fn.clone() + ".json");
         if let Ok(data) = tokio::fs::read(path).await {
@@ -286,8 +286,7 @@ async fn fetch(rec: &mut Receipt) -> reqwest::Result<bool> {
                     .unwrap_or_default()
                     .into_owned();
                 let text = res.text().await?;
-                let mut path = PathBuf::new();
-                path.push("data");
+                let mut path = config.data_path.clone();
                 path.push("raw");
                 path.push(rec.id.clone() + ".html");
                 if let Err(err) = tokio::fs::write(path, &text).await {
@@ -295,8 +294,7 @@ async fn fetch(rec: &mut Receipt) -> reqwest::Result<bool> {
                 }
                 parse(&text, rec);
                 if !rec.r#fn.is_empty() {
-                    let mut path = PathBuf::new();
-                    path.push("data");
+                    let mut path = config.data_path.clone();
                     path.push("parsed");
                     path.push(rec.r#fn.clone() + ".json");
                     match serde_json::to_vec(rec) {
@@ -376,10 +374,13 @@ mod iso8601 {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct TransactionMeta {
-    r#fn: String,
-    paid: HashMap<String, HashSet<usize>>,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+enum TransactionMeta {
+    Receipt {
+        r#fn: String,
+        paid: HashMap<String, HashSet<usize>>,
+    },
+    Comment(String),
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -409,10 +410,9 @@ impl Transaction {
 
 static BALANCE: OnceCell<RwLock<HashMap<String, i64>>> = OnceCell::const_new();
 
-async fn add_transaction(tr: Transaction) -> HashMap<String, i64> {
+async fn add_transaction(config: &Config, tr: Transaction) -> HashMap<String, i64> {
     let mut lock = BALANCE.get().unwrap().write().await;
-    let mut path = PathBuf::new();
-    path.push("data");
+    let mut path = config.data_path.clone();
     path.push("transactions");
     path.push(
         tr.date.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
@@ -435,16 +435,12 @@ async fn add_transaction(tr: Transaction) -> HashMap<String, i64> {
 struct Config {
     usernames: HashSet<String>,
     listener: String,
+    data_path: PathBuf,
     ignore_qr_condition: String,
 }
 
 #[tokio::main]
 async fn main() {
-    let (a, b, c) = tokio::join!(
-        tokio::fs::create_dir_all("data/raw"),
-        tokio::fs::create_dir_all("data/parsed"),
-        tokio::fs::create_dir_all("data/transactions"),
-    );
     let config_path = std::env::vars_os()
         .find(|(k, _)| k == "CONFIG_FILE")
         .map(|(_, v)| v)
@@ -452,19 +448,28 @@ async fn main() {
     let config = tokio::fs::read(config_path)
         .await
         .expect("failed to read config.json");
+    let config = serde_json::from_slice::<Config>(&config).expect("invalid config.json");
+    let config = Box::leak(Box::new(Arc::new(config)));
+    let data_path = |x| {
+        let mut ret = config.data_path.clone();
+        ret.push(x);
+        ret
+    };
+    let (a, b, c) = tokio::join!(
+        tokio::fs::create_dir_all(data_path("raw")),
+        tokio::fs::create_dir_all(data_path("parsed")),
+        tokio::fs::create_dir_all(data_path("transactions")),
+    );
     let style = &*Box::leak(Box::new(
         tokio::fs::read_to_string("style.css")
             .await
             .unwrap_or_default(),
     ));
-    let config = serde_json::from_slice::<Config>(&config).expect("invalid config.json");
-    let config = &*Box::leak(Box::new(config));
     a.expect("failed to create data/raw");
     b.expect("failed to create data/parsed");
     c.expect("failed to create data/transactions");
     let mut balance = HashMap::<String, i64>::new();
-    let mut path = PathBuf::new();
-    path.push("data");
+    let mut path = config.data_path.clone();
     path.push("transactions");
     let mut dir = tokio::fs::read_dir(path)
         .await
@@ -497,92 +502,95 @@ async fn main() {
     let app = axum::Router::new()
         .route(
             "/",
-            axum::routing::get(|| async {
-                axum::response::Html::from(format!(r#"
-                    <!DOCTYPE html>
-                    <html>
-                      <head>
-                        <link rel="preload" href="style.css" as="style">
-                        <link rel="preload" href="qr-scanner.umd.min.js" as="script">
-                        <link rel="preload" href="qr-scanner-worker.min.js" as="script">
-                        <meta charset="utf-8" />
-                        <meta name="viewport" content="width=device-width, initial-scale=1">
-                        <link href="style.css" rel="stylesheet">
-                        <script src="qr-scanner.umd.min.js"></script>
-                        <script>
-                          document.addEventListener('DOMContentLoaded', () => {{
-                            const video = document.getElementById('video');
-                            const usersel = document.getElementById('username');
-                            let done = false;
-                            let username = null;
-                            for (const cookie of document.cookie.split('; ')) {{
-                              if (cookie.startsWith('username=')) {{
-                                username = cookie.split('=')[1];
-                                console.log('expected username', username);
-                                for (const key in usersel.options) {{
-                                  if (usersel.options[key] && usersel.options[key].value == username) {{
-                                    usersel.options.selectedIndex = key;
-                                    console.log('selected key', key);
-                                    break;
+            axum::routing::get(|| {
+                let config = config.clone();
+                async move {
+                    axum::response::Html::from(format!(r#"
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <link rel="preload" href="style.css" as="style">
+                            <link rel="preload" href="qr-scanner.umd.min.js" as="script">
+                            <link rel="preload" href="qr-scanner-worker.min.js" as="script">
+                            <meta charset="utf-8" />
+                            <meta name="viewport" content="width=device-width, initial-scale=1">
+                            <link href="style.css" rel="stylesheet">
+                            <script src="qr-scanner.umd.min.js"></script>
+                            <script>
+                              document.addEventListener('DOMContentLoaded', () => {{
+                                const video = document.getElementById('video');
+                                const usersel = document.getElementById('username');
+                                let done = false;
+                                let username = null;
+                                for (const cookie of document.cookie.split('; ')) {{
+                                  if (cookie.startsWith('username=')) {{
+                                    username = cookie.split('=')[1];
+                                    console.log('expected username', username);
+                                    for (const key in usersel.options) {{
+                                      if (usersel.options[key] && usersel.options[key].value == username) {{
+                                        usersel.options.selectedIndex = key;
+                                        console.log('selected key', key);
+                                        break;
+                                      }}
+                                    }}
+                                    username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
+                                    console.log('selected username', username);
                                   }}
                                 }}
-                                username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
-                                console.log('selected username', username);
-                              }}
-                            }}
-                            if (video) {{
-                              window.qrScanner = new QrScanner(
-                                video,
-                                result => {{
-                                  console.log('done?', done);
-                                  if (done) return;
-                                  if (!result.data) {{
-                                      console.log('no data');
-                                      return;
-                                  }}
-                                  if ({}) {{
-                                      console.log('blacklisted');
-                                      return;
-                                  }}
-                                  const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
-                                  console.log('username', username);
-                                  if (username) {{
-                                    done = true;
-                                    document.cookie = 'username=' + username;
-                                    console.log('decoded qr code:', result.data)
-                                    document.location = "/add?" + result.data;
-                                  }}
-                                }}, {{
-                                  returnDetailedScanResult: true,
-                                }},
-                              );
-                              qrScanner.start();
-                            }} else {{
-                              console.log('not scanning');
-                            }}
-                          }});
-                        </script>
-                      </head>
-                      <body>
-                        <form>
-                          <select id="username" required>
-                            <option>Выберите имя пользователя</option>
-                            {}
-                            </select>
-                        </form>
-                        <video id="video" width="100%" height="100%"></video>
-                      </body>
-                    </html>
-                    "#,
-                    config.ignore_qr_condition,
-                    {
-                        let mut s = "".to_owned();
-                        for username in &config.usernames {
-                            s += &format!("<option value=\"{username}\">{username}</option>\n");
+                                if (video) {{
+                                  window.qrScanner = new QrScanner(
+                                    video,
+                                    result => {{
+                                      console.log('done?', done);
+                                      if (done) return;
+                                      if (!result.data) {{
+                                          console.log('no data');
+                                          return;
+                                      }}
+                                      if ({}) {{
+                                          console.log('blacklisted');
+                                          return;
+                                      }}
+                                      const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
+                                      console.log('username', username);
+                                      if (username) {{
+                                        done = true;
+                                        document.cookie = 'username=' + username;
+                                        console.log('decoded qr code:', result.data)
+                                        document.location = "/add?" + result.data;
+                                      }}
+                                    }}, {{
+                                      returnDetailedScanResult: true,
+                                    }},
+                                  );
+                                  qrScanner.start();
+                                }} else {{
+                                  console.log('not scanning');
+                                }}
+                              }});
+                            </script>
+                          </head>
+                          <body>
+                            <form>
+                              <select id="username" required>
+                                <option>Выберите имя пользователя</option>
+                                {}
+                                </select>
+                            </form>
+                            <video id="video" width="100%" height="100%"></video>
+                          </body>
+                        </html>
+                        "#,
+                        config.ignore_qr_condition,
+                        {
+                            let mut s = "".to_owned();
+                            for username in &config.usernames {
+                                s += &format!("<option value=\"{username}\">{username}</option>\n");
+                            }
+                            s
                         }
-                        s
-                    }
-                ))
+                    ))
+                }
             }),
         )
         .route(
@@ -674,16 +682,17 @@ async fn main() {
                             axum::http::HeaderValue::from_static("application/json"),
                         )],
                         {
+                            let meta = f.get("comment").map(|x| TransactionMeta::Comment(x.to_owned()));
                             if let Some(to) = f.get("to") {
                                 if let Some(amt) = f.get("amount") {
                                     if let Ok(amt) = amt.parse::<i64>() {
                                         if let Some(from) = f.get("from") {
-                                            let mut tr = Transaction::new(None);
+                                            let mut tr = Transaction::new(meta);
                                             tr.pay(from, to, amt);
                                             tr.finalize();
-                                            serde_json::to_string(&add_transaction(tr).await).expect("balance serialization failed")
+                                            serde_json::to_string(&add_transaction(&config, tr).await).expect("balance serialization failed")
                                         } else {
-                                            let mut tr = Transaction::new(None);
+                                            let mut tr = Transaction::new(meta);
                                             let total = amt;
                                             for user in &config.usernames {
                                                 if user != to {
@@ -695,7 +704,7 @@ async fn main() {
                                                 }
                                             }
                                             tr.finalize();
-                                            serde_json::to_string(&add_transaction(tr).await).expect("balance serialization failed")
+                                            serde_json::to_string(&add_transaction(&config, tr).await).expect("balance serialization failed")
                                         }
                                     } else {
                                         "invalid amount".to_owned()
@@ -724,8 +733,7 @@ async fn main() {
                         let Some(username) = f.get("username") else {
                             return axum::response::Html::from("missing username".to_owned())
                         };
-                        let mut path = PathBuf::new();
-                        path.push("data");
+                        let mut path = config.data_path.clone();
                         path.push("parsed");
                         path.push(num.replace(['/', '.', '\\'], "") + ".json");
                         let Ok(data) = tokio::fs::read(path).await else {
@@ -734,10 +742,7 @@ async fn main() {
                         let Ok(rec) = serde_json::from_slice::<Receipt>(&data) else {
                             return axum::response::Html::from("invalid recept cache".to_owned());
                         };
-                        let mut meta = TransactionMeta {
-                            r#fn: num.to_owned(),
-                            ..TransactionMeta::default()
-                        };
+                        let mut paid = HashMap::<String, HashSet<usize>>::new();
                         let mut per_item = HashMap::<usize, HashSet<String>>::new();
                         for (k, v) in f.iter() {
                             let Some((username, idx)) = k.split_once('$') else {
@@ -749,7 +754,7 @@ async fn main() {
                             let Ok(idx) = idx.parse::<usize>() else {
                                 continue
                             };
-                            meta.paid.entry(username.to_owned()).or_default().insert(idx);
+                            paid.entry(username.to_owned()).or_default().insert(idx);
                             per_item.entry(idx).or_default().insert(username.to_owned());
                         }
                         let mut groups = HashMap::<Vec<String>, Vec<usize>>::new();
@@ -761,7 +766,10 @@ async fn main() {
                         for v in groups.values_mut() {
                             v.sort();
                         }
-                        let mut tr = Transaction::new(Some(meta));
+                        let mut tr = Transaction::new(Some(TransactionMeta::Receipt {
+                            r#fn: num.to_owned(),
+                            paid,
+                        }));
                         for (k, v) in &groups {
                             let total: u128 = v.iter().filter_map(|x| rec.items.get(*x)).map(|x| x.total as u128).sum();
                             let total = u64::try_from(total).expect("receipt price too big");
@@ -778,7 +786,7 @@ async fn main() {
                             }
                         }
                         tr.finalize();
-                        let bal = add_transaction(tr).await;
+                        let bal = add_transaction(&config, tr).await;
                         let mut ret = r#"
                         <!DOCTYPE html>
                         <html>
@@ -879,9 +887,10 @@ async fn main() {
                                     for _ in 0..8 {
                                         let mut rec = rec.clone();
                                         let tx = tx.clone();
+                                        let config = config.clone();
                                         tokio::spawn(async move {
                                             for _ in 0..8 {
-                                                if let Ok(true) = fetch(&mut rec).await {
+                                                if let Ok(true) = fetch(&config, &mut rec).await {
                                                     let _ = tx.try_send(rec);
                                                     break;
                                                 }
