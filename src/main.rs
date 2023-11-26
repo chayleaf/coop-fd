@@ -4,7 +4,6 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::CStr,
     path::PathBuf,
-    sync::Arc,
 };
 
 use axum::response::IntoResponse;
@@ -439,6 +438,10 @@ struct Config {
     ignore_qr_condition: String,
 }
 
+fn copy_ref<T: ?Sized>(t: &T) -> &T {
+    t
+}
+
 #[tokio::main]
 async fn main() {
     let config_path = std::env::vars_os()
@@ -449,7 +452,7 @@ async fn main() {
         .await
         .expect("failed to read config.json");
     let config = serde_json::from_slice::<Config>(&config).expect("invalid config.json");
-    let config = Box::leak(Box::new(Arc::new(config)));
+    let config = Box::leak(Box::new(config));
     let data_path = |x| {
         let mut ret = config.data_path.clone();
         ret.push(x);
@@ -474,6 +477,7 @@ async fn main() {
     let mut dir = tokio::fs::read_dir(path)
         .await
         .expect("failed to read transaction list");
+    let paid_receipts = Box::leak(Box::new(dashmap::DashSet::<String>::new()));
     while let Some(file) = dir
         .next_entry()
         .await
@@ -492,6 +496,9 @@ async fn main() {
                 file.path().display()
             )
         });
+        if let Some(TransactionMeta::Receipt { r#fn, .. }) = tr.meta {
+            paid_receipts.insert(r#fn);
+        }
         for (k, v) in tr.balance_changes.iter() {
             let x = balance.entry(k.to_owned()).or_default();
             *x = x.checked_add(*v).expect("balance overflowed");
@@ -503,7 +510,7 @@ async fn main() {
         .route(
             "/",
             axum::routing::get(|| {
-                let config = config.clone();
+                let config = copy_ref(config);
                 async move {
                     axum::response::Html::from(format!(r#"
                         <!DOCTYPE html>
@@ -674,7 +681,7 @@ async fn main() {
         .route(
             "/pay",
             axum::routing::post(|axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
-                let config = config.clone();
+                let config = copy_ref(config);
                 async move {
                     (
                         [(
@@ -690,7 +697,7 @@ async fn main() {
                                             let mut tr = Transaction::new(meta);
                                             tr.pay(from, to, amt);
                                             tr.finalize();
-                                            serde_json::to_string(&add_transaction(&config, tr).await).expect("balance serialization failed")
+                                            serde_json::to_string(&add_transaction(config, tr).await).expect("balance serialization failed")
                                         } else {
                                             let mut tr = Transaction::new(meta);
                                             let total = amt;
@@ -704,7 +711,7 @@ async fn main() {
                                                 }
                                             }
                                             tr.finalize();
-                                            serde_json::to_string(&add_transaction(&config, tr).await).expect("balance serialization failed")
+                                            serde_json::to_string(&add_transaction(config, tr).await).expect("balance serialization failed")
                                         }
                                     } else {
                                         "invalid amount".to_owned()
@@ -725,7 +732,8 @@ async fn main() {
             "/submit",
             axum::routing::post(
                 |axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
-                    let config = config.clone();
+                    let config = copy_ref(config);
+                    let paid_receipts = copy_ref(paid_receipts);
                     async move {
                         let Some(num) = f.get("fn") else {
                             return axum::response::Html::from("missing fn".to_owned());
@@ -786,7 +794,8 @@ async fn main() {
                             }
                         }
                         tr.finalize();
-                        let bal = add_transaction(&config, tr).await;
+                        let bal = add_transaction(config, tr).await;
+                        paid_receipts.insert(rec.r#fn);
                         let mut ret = r#"
                         <!DOCTYPE html>
                         <html>
@@ -824,7 +833,8 @@ async fn main() {
             "/add",
             axum::routing::get(
                 |axum::extract::RawQuery(q): axum::extract::RawQuery, cookies: axum_extra::extract::CookieJar| {
-                    let config = config.clone();
+                    let config = copy_ref(config);
+                    let paid_receipts = copy_ref(paid_receipts);
                     async move {
                         axum::response::Html::from(if let Some(q) = q {
                             if let Some(username) = cookies.get("username").map(|x| x.value()) {
@@ -887,10 +897,10 @@ async fn main() {
                                     for _ in 0..8 {
                                         let mut rec = rec.clone();
                                         let tx = tx.clone();
-                                        let config = config.clone();
+                                        let config = copy_ref(config);
                                         tokio::spawn(async move {
                                             for _ in 0..8 {
-                                                if let Ok(true) = fetch(&config, &mut rec).await {
+                                                if let Ok(true) = fetch(config, &mut rec).await {
                                                     let _ = tx.try_send(rec);
                                                     break;
                                                 }
@@ -918,6 +928,9 @@ async fn main() {
                                             "<h3>Чек на <b>{}</b> рублей (платит <b>{}</b>)</h3>\n",
                                             rec.total as f64 / 100.0, username,
                                         );
+                                        if paid_receipts.contains(&rec.r#fn) {
+                                            html += "<h1>Чек уже был оплачен, возможно, вы ошиблись!</h1>";
+                                        }
                                         html += "<form action=\"submit\" method=\"post\">\n";
                                         html += &format!(
                                             "<input type=\"hidden\" name=\"fn\" value=\"{}\"></input>

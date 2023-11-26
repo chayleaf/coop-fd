@@ -9,6 +9,7 @@ edition = "2021"
 axum = "0.6.20"
 axum-extra = { version = "0.8.0", features = ["cookie"] }
 chrono = { version = "0.4.31", features = ["serde"] }
+dashmap = "5.5.3"
 html-escape = "0.2.13"
 leptess = "0.14.0"
 log = "0.4.20"
