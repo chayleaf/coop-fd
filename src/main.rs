@@ -118,7 +118,9 @@ fn parse(data: &str, ret: &mut Receipt) -> Option<()> {
                     .and_then(|x| x.split("&lt;/span&gt;").nth(1))
                     .and_then(|x| x.split("&lt;span&gt;").last())
                 {
-                    item.unit = html_escape::decode_html_entities(x).into_owned();
+                    if x != "&lt;!-- --&gt;" {
+                        item.unit = html_escape::decode_html_entities(x).into_owned();
+                    }
                 }
                 if let Some(x) = data
                     .split('x')
