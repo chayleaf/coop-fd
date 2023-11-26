@@ -411,10 +411,13 @@ static BALANCE: OnceCell<RwLock<HashMap<String, i64>>> = OnceCell::const_new();
 
 async fn add_transaction(config: &Config, tr: Transaction) -> HashMap<String, i64> {
     let mut lock = BALANCE.get().unwrap().write().await;
+    if tr.balance_changes.is_empty() {
+        return lock.clone();
+    }
     let mut path = config.data_path.clone();
     path.push("transactions");
     path.push(
-        tr.date.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+        tr.date.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
             + "_"
             + &uuid::Uuid::new_v4().to_string()
             + ".json",
@@ -693,7 +696,7 @@ async fn main() {
                             let meta = f.get("comment").map(|x| TransactionMeta::Comment(x.to_owned()));
                             if let Some(to) = f.get("to") {
                                 if let Some(amt) = f.get("amount") {
-                                    if let Ok(amt) = amt.parse::<i64>() {
+                                    if let Some(amt) = amt.parse::<i64>().ok().filter(|x| *x != 0) {
                                         if let Some(from) = f.get("from") {
                                             let mut tr = Transaction::new(meta);
                                             tr.pay(from, to, amt);
