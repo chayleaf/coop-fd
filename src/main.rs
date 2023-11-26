@@ -35,6 +35,7 @@ struct Receipt {
 struct Item {
     name: String,
     count: f64,
+    unit: String,
     per_item: u64,
     total: u64,
     tax: u64,
@@ -110,6 +111,14 @@ fn parse(data: &str, ret: &mut Receipt) -> Option<()> {
                     .and_then(|x| x.parse::<f64>().ok())
                 {
                     item.count = x;
+                }
+                if let Some(x) = data
+                    .split('x')
+                    .next()
+                    .and_then(|x| x.split("&lt;/span&gt;").nth(1))
+                    .and_then(|x| x.split("&lt;span&gt;").last())
+                {
+                    item.unit = html_escape::decode_html_entities(x).into_owned();
                 }
                 if let Some(x) = data
                     .split('x')
@@ -817,9 +826,9 @@ async fn main() {
                         bal.sort_by_key(|(k, _)| config.usernames.iter().enumerate().find(|(_, x)| &k == x).map(|x| x.0));
                         for (k, v) in bal {
                             if &k == username {
-                                ret += &format!("<li><b>{}: {}</b></li>", k, v as f64 / 100.0);
+                                ret += &format!("<li><b>{}: {:.2}</b></li>", k, v as f64 / 100.0);
                             } else {
-                                ret += &format!("<li>{}: {}</li>", k, v as f64 / 100.0);
+                                ret += &format!("<li>{}: {:.2}</li>", k, v as f64 / 100.0);
                             }
                         }
                         ret += r#"
@@ -929,7 +938,7 @@ async fn main() {
                                           <body>
                                         "#.to_owned();
                                         html += &format!(
-                                            "<h3>Чек на <b>{}</b> рублей (платит <b>{}</b>)</h3>\n",
+                                            "<h3>Чек на <b>{:.2}</b> рублей (платит <b>{}</b>)</h3>\n",
                                             rec.total as f64 / 100.0, username,
                                         );
                                         if paid_receipts.contains(&rec.r#fn) {
@@ -948,7 +957,15 @@ async fn main() {
                                             for username in &config.usernames {
                                                 html += &format!("<input type=\"checkbox\" name=\"{}${}\" checked=\"true\">{0}</input>\n", username, i);
                                             }
-                                            html += &format!("| {}*{} = {}*{} = {}\n", item.name, item.count, item.per_item as f64 / 100.0, item.count, item.total as f64 / 100.0);
+                                            html += &format!(
+                                                "<div>{}*{}{} = {:.2}*{} = {:.2}</div>\n",
+                                                item.name,
+                                                item.count,
+                                                if item.unit.is_empty() { "".to_owned() } else { " ".to_owned() + &item.unit },
+                                                item.per_item as f64 / 100.0,
+                                                item.count,
+                                                item.total as f64 / 100.0,
+                                            );
                                             html += "</li>";
                                         }
                                         html += "</ol><input type=\"submit\" value=\"Отправить\"/></form></body></html>";
