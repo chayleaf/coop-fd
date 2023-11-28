@@ -426,7 +426,7 @@ static BALANCE: OnceCell<RwLock<HashMap<String, i64>>> = OnceCell::const_new();
 
 async fn add_transaction(config: &Config, mut tr: Transaction) -> HashMap<String, i64> {
     let mut lock = BALANCE.get().unwrap().write().await;
-    if tr.balance_changes.is_empty() {
+    if tr.balance_changes.is_empty() && tr.meta.is_none() {
         return lock.clone();
     }
     tr.date = chrono::Utc::now();
