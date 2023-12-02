@@ -31,6 +31,13 @@ struct Receipt {
     date: String,
 }
 
+impl Receipt {
+    fn fnifp(&self) -> Option<String> {
+        (!self.r#fn.is_empty() && !self.i.is_empty() && !self.fp.is_empty())
+            .then(|| format!("{}_{}_{}", self.r#fn, self.i, self.fp))
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct Item {
     name: String,
@@ -58,6 +65,7 @@ fn parse_qr(s: &str) -> Receipt {
 }
 
 fn parse(data: &str, ret: &mut Receipt) -> Option<()> {
+    // TODO: parse older formats? just for fun
     let data = data.split("fido_cheque_container\">").nth(1)?;
     let data = data.split('<').next()?;
     let data = data.trim();
@@ -167,7 +175,6 @@ fn parse(data: &str, ret: &mut Receipt) -> Option<()> {
                     }
                 }
             }
-            // TODO: rest of fields
             ret.items.push(item);
         }
         ret.items.pop();
@@ -217,10 +224,10 @@ fn parse(data: &str, ret: &mut Receipt) -> Option<()> {
 }
 
 async fn fetch(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
-    if !rec.r#fn.is_empty() {
+    if let Some(fnifp) = rec.fnifp() {
         let mut path = config.data_path.clone();
         path.push("parsed");
-        path.push(rec.r#fn.clone() + ".json");
+        path.push(fnifp + ".json");
         if let Ok(data) = tokio::fs::read(path).await {
             if let Ok(parsed) = serde_json::from_slice::<Receipt>(&data) {
                 *rec = parsed;
@@ -303,10 +310,10 @@ async fn fetch(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
                     log::error!("failed to write raw receipt: {err:?}");
                 }
                 parse(&text, rec);
-                if !rec.r#fn.is_empty() {
+                if let Some(fnifp) = rec.fnifp() {
                     let mut path = config.data_path.clone();
                     path.push("parsed");
-                    path.push(rec.r#fn.clone() + ".json");
+                    path.push(fnifp + ".json");
                     match serde_json::to_vec(rec) {
                         Ok(rec) => {
                             if let Err(err) = tokio::fs::write(path, &rec).await {
@@ -388,6 +395,8 @@ mod iso8601 {
 enum TransactionMeta {
     Receipt {
         r#fn: String,
+        i: String,
+        fp: String,
         paid: HashMap<String, HashSet<usize>>,
     },
     Comment(String),
@@ -517,8 +526,14 @@ async fn main() {
                 file.path().display()
             )
         });
-        if let Some(TransactionMeta::Receipt { r#fn, .. }) = tr.meta {
-            paid_receipts.insert(r#fn);
+        if let Some(TransactionMeta::Receipt {
+            r#fn,
+            i,
+            fp,
+            paid: _,
+        }) = tr.meta
+        {
+            paid_receipts.insert(format!("{}_{}_{}", r#fn, i, fp));
         }
         for (k, v) in tr.balance_changes.iter() {
             let x = balance.entry(k.to_owned()).or_default();
@@ -756,15 +771,21 @@ async fn main() {
                     let config = copy_ref(config);
                     let paid_receipts = copy_ref(paid_receipts);
                     async move {
-                        let Some(num) = f.get("fn") else {
+                        let Some(r#fn) = f.get("fn") else {
                             return axum::response::Html::from("missing fn".to_owned());
+                        };
+                        let Some(i) = f.get("i") else {
+                            return axum::response::Html::from("missing i".to_owned());
+                        };
+                        let Some(fp) = f.get("fp") else {
+                            return axum::response::Html::from("missing fp".to_owned());
                         };
                         let Some(username) = f.get("username") else {
                             return axum::response::Html::from("missing username".to_owned())
                         };
                         let mut path = config.data_path.clone();
                         path.push("parsed");
-                        path.push(num.replace(['/', '.', '\\'], "") + ".json");
+                        path.push(format!("{}_{}_{}.json", r#fn, i, fp).replace(['/', '\\'], ""));
                         let Ok(data) = tokio::fs::read(path).await else {
                             return axum::response::Html::from("missing recept cache".to_owned());
                         };
@@ -796,7 +817,9 @@ async fn main() {
                             v.sort();
                         }
                         let mut tr = Transaction::new(Some(TransactionMeta::Receipt {
-                            r#fn: num.to_owned(),
+                            r#fn: r#fn.to_owned(),
+                            i: i.to_owned(),
+                            fp: fp.to_owned(),
                             paid,
                         }));
                         for (k, v) in &groups {
@@ -816,7 +839,9 @@ async fn main() {
                         }
                         tr.finalize();
                         let bal = add_transaction(config, tr).await;
-                        paid_receipts.insert(rec.r#fn);
+                        if let Some(fnifp) = rec.fnifp() {
+                            paid_receipts.insert(fnifp);
+                        }
                         let mut ret = r#"
                         <!DOCTYPE html>
                         <html>
@@ -911,9 +936,7 @@ async fn main() {
                                         }
                                     }
                                 }
-                                if rec.r#fn.is_empty() || rec.fp.is_empty() || rec.i.is_empty() {
-                                    "error".to_owned()
-                                } else {
+                                if let Some(fnifp) = rec.fnifp() {
                                     let (tx, mut rx) = mpsc::channel(1);
                                     for _ in 0..8 {
                                         let mut rec = rec.clone();
@@ -949,14 +972,18 @@ async fn main() {
                                             "<h3>Чек на <b>{:.2}</b> рублей (платит <b>{}</b>)</h3>\n",
                                             rec.total as f64 / 100.0, username,
                                         );
-                                        if paid_receipts.contains(&rec.r#fn) {
+                                        if paid_receipts.contains(&fnifp) {
                                             html += "<h1>Чек уже был оплачен, возможно, вы ошиблись!</h1>";
                                         }
                                         html += "<form action=\"submit\" method=\"post\">\n";
                                         html += &format!(
                                             "<input type=\"hidden\" name=\"fn\" value=\"{}\"></input>
+                                            <input type=\"hidden\" name=\"i\" value=\"{}\"></input>
+                                            <input type=\"hidden\" name=\"fp\" value=\"{}\"></input>
                                             <input type=\"hidden\" name=\"username\" value=\"{}\"></input>\n",
                                             rec.r#fn,
+                                            rec.i,
+                                            rec.fp,
                                             username,
                                         );
                                         html += "<ol>";
@@ -981,6 +1008,8 @@ async fn main() {
                                     } else {
                                         "error".to_owned()
                                     }
+                                } else {
+                                    "error".to_owned()
                                 }
                             } else {
                                 "missing username cookie".to_owned()
