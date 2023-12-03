@@ -639,8 +639,7 @@ async fn main() {
 
     let mut balance = HashMap::<String, i64>::new();
     let paid_receipts = Box::leak(Box::new(dashmap::DashSet::<String>::new()));
-    let path = data_path("transactions");
-    let mut dir = tokio::fs::read_dir(path)
+    let mut dir = tokio::fs::read_dir(data_path("transactions"))
         .await
         .expect("failed to read transaction list");
     while let Some(file) = dir
@@ -679,8 +678,7 @@ async fn main() {
     BALANCE.set(balance.into()).unwrap();
 
     let commodities = &*Box::leak(Box::new(DashMap::<String, Commodity>::new()));
-    let path = data_path("parsed");
-    let mut dir = tokio::fs::read_dir(path)
+    let mut dir = tokio::fs::read_dir(data_path("parsed"))
         .await
         .expect("failed to read receipt list");
     while let Some(file) = dir
