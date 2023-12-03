@@ -8,7 +8,7 @@
     <script>
       const entries = {
         {% for item in items %}
-          "{{ item.name }}": { unit: "{{ item.unit }}", count: "{{ item.count }}", last_timestamp: "{{ item.last_timestamp }}" },
+          "{{ item.name }}": { unit: "{{ item.unit }}", count: {{ item.count }}, last_timestamp: {{ item.last_timestamp }} },
         {% endfor %}
       };
       document.addEventListener('DOMContentLoaded', () => {
