@@ -1,12 +1,14 @@
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     ffi::CStr,
     path::PathBuf,
 };
 
 use axum::response::IntoResponse;
+use chrono::Utc;
+use indexmap::IndexSet;
+use liquid_core::{Display_filter, Filter, FilterReflection, ParseFilter, Runtime, ValueView};
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, OnceCell, RwLock};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -397,7 +399,7 @@ enum TransactionMeta {
         r#fn: String,
         i: String,
         fp: String,
-        paid: HashMap<String, HashSet<usize>>,
+        paid: HashMap<String, BTreeSet<usize>>,
     },
     Comment(String),
 }
@@ -462,7 +464,7 @@ async fn add_transaction(config: &Config, mut tr: Transaction) -> HashMap<String
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct Config {
-    usernames: HashSet<String>,
+    usernames: IndexSet<String>,
     listener: String,
     data_path: PathBuf,
     ignore_qr_condition: String,
@@ -470,6 +472,33 @@ struct Config {
 
 fn copy_ref<T: ?Sized>(t: &T) -> &T {
     t
+}
+
+#[derive(Clone, Debug, Default, Display_filter, ParseFilter, FilterReflection)]
+#[name = "currency"]
+#[filter(
+    name = "currency",
+    description = "Currency filter (12300 -> 123.00)",
+    parsed(CurrencyFilter)
+)]
+pub struct CurrencyFilter;
+
+impl Filter for CurrencyFilter {
+    fn evaluate(
+        &self,
+        input: &dyn ValueView,
+        _runtime: &dyn Runtime,
+    ) -> liquid_core::Result<liquid_core::Value> {
+        input
+            .as_scalar()
+            .and_then(|scal| {
+                scal.to_integer()
+                    .map(|x| x as f64)
+                    .or_else(|| scal.to_float())
+            })
+            .map(|x| liquid_core::Value::Scalar(format!("{:.2}", x / 100.).into()))
+            .ok_or_else(|| liquid_core::Error::with_msg("currency expects an integer or a float"))
+    }
 }
 
 #[tokio::main]
@@ -494,10 +523,19 @@ async fn main() {
         tokio::fs::create_dir_all(data_path("transactions")),
     );
     let style = &*Box::leak(Box::new(
-        tokio::fs::read_to_string("style.css")
+        tokio::fs::read_to_string("static/style.css")
             .await
             .unwrap_or_default(),
     ));
+    let parser = liquid::ParserBuilder::with_stdlib()
+        .filter(CurrencyFilter)
+        .build()
+        .unwrap();
+    let root = &*Box::leak(Box::new(parser.parse_file("static/index.html").unwrap()));
+    let submitted = &*Box::leak(Box::new(
+        parser.parse_file("static/submitted.html").unwrap(),
+    ));
+    let add = &*Box::leak(Box::new(parser.parse_file("static/add.html").unwrap()));
     a.expect("failed to create data/raw");
     b.expect("failed to create data/parsed");
     c.expect("failed to create data/transactions");
@@ -547,92 +585,12 @@ async fn main() {
             "/",
             axum::routing::get(|| {
                 let config = copy_ref(config);
+                let root = copy_ref(root);
                 async move {
-                    axum::response::Html::from(format!(r#"
-                        <!DOCTYPE html>
-                        <html>
-                          <head>
-                            <link rel="preload" href="style.css" as="style">
-                            <link rel="preload" href="qr-scanner.umd.min.js" as="script">
-                            <link rel="preload" href="qr-scanner-worker.min.js" as="script">
-                            <meta charset="utf-8" />
-                            <meta name="viewport" content="width=device-width, initial-scale=1">
-                            <link href="style.css" rel="stylesheet">
-                            <script src="qr-scanner.umd.min.js"></script>
-                            <script>
-                              document.addEventListener('DOMContentLoaded', () => {{
-                                const video = document.getElementById('video');
-                                const usersel = document.getElementById('username');
-                                let done = false;
-                                let username = null;
-                                for (const cookie of document.cookie.split('; ')) {{
-                                  if (cookie.startsWith('username=')) {{
-                                    username = cookie.split('=')[1];
-                                    console.log('expected username', username);
-                                    for (const key in usersel.options) {{
-                                      if (usersel.options[key] && usersel.options[key].value == username) {{
-                                        usersel.options.selectedIndex = key;
-                                        console.log('selected key', key);
-                                        break;
-                                      }}
-                                    }}
-                                    username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
-                                    console.log('selected username', username);
-                                  }}
-                                }}
-                                if (video) {{
-                                  window.qrScanner = new QrScanner(
-                                    video,
-                                    result => {{
-                                      console.log('done?', done);
-                                      if (done) return;
-                                      if (!result.data) {{
-                                          console.log('no data');
-                                          return;
-                                      }}
-                                      if ({}) {{
-                                          console.log('blacklisted');
-                                          return;
-                                      }}
-                                      const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
-                                      console.log('username', username);
-                                      if (username) {{
-                                        done = true;
-                                        document.cookie = 'username=' + username;
-                                        console.log('decoded qr code:', result.data)
-                                        document.location = "add?" + result.data;
-                                      }}
-                                    }}, {{
-                                      returnDetailedScanResult: true,
-                                    }},
-                                  );
-                                  qrScanner.start();
-                                }} else {{
-                                  console.log('not scanning');
-                                }}
-                              }});
-                            </script>
-                          </head>
-                          <body>
-                            <form>
-                              <select id="username" required>
-                                <option>Выберите имя пользователя</option>
-                                {}
-                                </select>
-                            </form>
-                            <video id="video" width="100%" height="100%"></video>
-                          </body>
-                        </html>
-                        "#,
-                        config.ignore_qr_condition,
-                        {
-                            let mut s = "".to_owned();
-                            for username in &config.usernames {
-                                s += &format!("<option value=\"{username}\">{username}</option>\n");
-                            }
-                            s
-                        }
-                    ))
+                    axum::response::Html::from(root.render(&liquid::object!({
+                        "extra_qr_processing": format!("if({})return;", config.ignore_qr_condition),
+                        "usernames": &config.usernames,
+                    })).unwrap_or_else(|err| format!("Error: {err}")))
                 }
             }),
         )
@@ -770,6 +728,7 @@ async fn main() {
                 |axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
                     let config = copy_ref(config);
                     let paid_receipts = copy_ref(paid_receipts);
+                    let submitted = copy_ref(submitted);
                     async move {
                         let Some(r#fn) = f.get("fn") else {
                             return axum::response::Html::from("missing fn".to_owned());
@@ -792,7 +751,7 @@ async fn main() {
                         let Ok(rec) = serde_json::from_slice::<Receipt>(&data) else {
                             return axum::response::Html::from("invalid recept cache".to_owned());
                         };
-                        let mut paid = HashMap::<String, HashSet<usize>>::new();
+                        let mut paid = HashMap::<String, BTreeSet<usize>>::new();
                         let mut per_item = HashMap::<usize, HashSet<String>>::new();
                         for (k, v) in f.iter() {
                             let Some((username, idx)) = k.split_once('$') else {
@@ -842,35 +801,16 @@ async fn main() {
                         if let Some(fnifp) = rec.fnifp() {
                             paid_receipts.insert(fnifp);
                         }
-                        let mut ret = r#"
-                        <!DOCTYPE html>
-                        <html>
-                          <head>
-                            <link rel="preload" href="style.css" as="style">
-                            <meta charset="utf-8" />
-                            <meta name="viewport" content="width=device-width, initial-scale=1">
-                            <link href="style.css" rel="stylesheet">
-                          </head>
-                          <body>
-                            Платёж совершён! Новый баланс:
-                            <ul>
-                        "#.to_owned();
                         let mut bal = bal.into_iter().collect::<Vec<_>>();
                         bal.sort_by_key(|(k, _)| config.usernames.iter().enumerate().find(|(_, x)| &k == x).map(|x| x.0));
-                        for (k, v) in bal {
-                            if &k == username {
-                                ret += &format!("<li><b>{}: {:.2}</b></li>", k, v as f64 / 100.0);
-                            } else {
-                                ret += &format!("<li>{}: {:.2}</li>", k, v as f64 / 100.0);
-                            }
-                        }
-                        ret += r#"
-                            </ul>
-                            <a href="."><button>Добавить ещё чек</button></a>
-                          </body>
-                        </html>
-                        "#;
-                        axum::response::Html::from(ret)
+                        let bal = bal.into_iter().map(|x| liquid::object!({
+                            "username": x.0,
+                            "balance": x.1,
+                        })).collect::<Vec<_>>();
+                        axum::response::Html::from(submitted.render(&liquid::object!({
+                            "balance": bal,
+                            "username": username,
+                        })).unwrap_or_else(|err| format!("Error: {err}")))
                     }
                 }
             )
@@ -881,6 +821,7 @@ async fn main() {
                 |axum::extract::RawQuery(q): axum::extract::RawQuery, cookies: axum_extra::extract::CookieJar| {
                     let config = copy_ref(config);
                     let paid_receipts = copy_ref(paid_receipts);
+                    let add = copy_ref(add);
                     async move {
                         axum::response::Html::from(if let Some(q) = q {
                             if let Some(username) = cookies.get("username").map(|x| x.value()) {
@@ -957,54 +898,25 @@ async fn main() {
                                     drop(tx);
                                     if let Some(rec) = rx.recv().await {
                                         drop(rx);
-                                        let mut html = r#"
-                                        <!DOCTYPE html>
-                                        <html>
-                                          <head>
-                                            <link rel="preload" href="style.css" as="style">
-                                            <meta charset="utf-8" />
-                                            <meta name="viewport" content="width=device-width, initial-scale=1">
-                                            <link href="style.css" rel="stylesheet">
-                                          </head>
-                                          <body>
-                                        "#.to_owned();
-                                        html += &format!(
-                                            "<h3>Чек на <b>{:.2}</b> рублей (платит <b>{}</b>)</h3>\n",
-                                            rec.total as f64 / 100.0, username,
-                                        );
-                                        if paid_receipts.contains(&fnifp) {
-                                            html += "<h1>Чек уже был оплачен, возможно, вы ошиблись!</h1>";
-                                        }
-                                        html += "<form action=\"submit\" method=\"post\">\n";
-                                        html += &format!(
-                                            "<input type=\"hidden\" name=\"fn\" value=\"{}\"></input>
-                                            <input type=\"hidden\" name=\"i\" value=\"{}\"></input>
-                                            <input type=\"hidden\" name=\"fp\" value=\"{}\"></input>
-                                            <input type=\"hidden\" name=\"username\" value=\"{}\"></input>\n",
-                                            rec.r#fn,
-                                            rec.i,
-                                            rec.fp,
-                                            username,
-                                        );
-                                        html += "<ol>";
-                                        for (i, item) in rec.items.iter().enumerate() {
-                                            html += "<li>\n";
-                                            for username in &config.usernames {
-                                                html += &format!("<input type=\"checkbox\" name=\"{}${}\" checked=\"true\">{0}</input>\n", username, i);
-                                            }
-                                            html += &format!(
-                                                "<div>{}*{}{} = {:.2}*{} = {:.2}</div>\n",
-                                                item.name,
-                                                item.count,
-                                                if item.unit.is_empty() { "".to_owned() } else { " ".to_owned() + &item.unit },
-                                                item.per_item as f64 / 100.0,
-                                                item.count,
-                                                item.total as f64 / 100.0,
-                                            );
-                                            html += "</li>";
-                                        }
-                                        html += "</ol><input type=\"submit\" value=\"Отправить\"/></form></body></html>";
-                                        html
+                                        add.render(&liquid::object!({
+                                            "total": rec.total,
+                                            "username": username,
+                                            "already_paid": paid_receipts.contains(&fnifp),
+                                            "fn": rec.r#fn,
+                                            "i": rec.i,
+                                            "fp": rec.fp,
+                                            "items": rec.items.iter().enumerate().map(|(i, item)| {
+                                                liquid::object!({
+                                                    "num": i,
+                                                    "name": item.name,
+                                                    "count": item.count,
+                                                    "unit": if item.unit.is_empty() { "".to_owned() } else { " ".to_owned() + &item.unit },
+                                                    "per_item": item.per_item,
+                                                    "total": item.total,
+                                                })
+                                            }).collect::<Vec<_>>(),
+                                            "usernames": &config.usernames,
+                                        })).unwrap_or_else(|err| format!("Error: {err}"))
                                     } else {
                                         "error".to_owned()
                                     }

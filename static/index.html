@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="preload" href="style.css" as="style">
+    <link rel="preload" href="qr-scanner.umd.min.js" as="script">
+    <link rel="preload" href="qr-scanner-worker.min.js" as="script">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="style.css" rel="stylesheet">
+    <script src="qr-scanner.umd.min.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        const video = document.getElementById('video');
+        const usersel = document.getElementById('username');
+        let done = false;
+        let username = null;
+        for (const cookie of document.cookie.split('; ')) {
+          if (cookie.startsWith('username=')) {
+            username = cookie.split('=')[1];
+            console.log('expected username', username);
+            for (const key in usersel.options) {
+              if (usersel.options[key] && usersel.options[key].value == username) {
+                usersel.options.selectedIndex = key;
+                console.log('selected key', key);
+                break;
+              }
+            }
+            username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
+            console.log('selected username', username);
+          }
+        }
+        if (video) {
+          window.qrScanner = new QrScanner(
+            video,
+            result => {
+              console.log('done?', done);
+              if (done) return;
+              if (!result.data) {
+                  console.log('no data');
+                  return;
+              }
+              {{ extra_qr_processing }}
+              const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
+              console.log('username', username);
+              if (username) {
+                done = true;
+                document.cookie = 'username=' + username;
+                console.log('decoded qr code:', result.data)
+                document.location = "add?" + result.data;
+              }
+            }, {
+              returnDetailedScanResult: true,
+            },
+          );
+          qrScanner.start();
+        } else {
+          console.log('not scanning');
+        }
+      });
+    </script>
+  </head>
+  <body>
+    <form>
+      <select id="username" required>
+        <option>Выберите имя пользователя</option>
+        {% for username in usernames %}
+        <option value="{{ username | escape }}">{{ username | escape }}</option>
+        {% endfor %}
+        </select>
+    </form>
+    <video id="video" width="100%" height="100%"></video>
+  </body>
+</html>
