@@ -23,6 +23,7 @@
             // -1 = choose A
             //  1 = choose B
             ((a, b) => entries[b.item].count - entries[a.item].count),
+            ((a, b) => (b.start == 0) - (a.start == 0)),
             ((a, b) => entries[b.item].last_timestamp - entries[a.item].last_timestamp),
             fzf.byStartAsc,
           ]
