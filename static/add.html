@@ -22,7 +22,7 @@
         {% for user in usernames %}
           <input type="checkbox" name="{{ user | escape }}${{ item.num }}" checked="true">{{ user | escape }}</input>
         {% endfor %}
-        <div>{{ item.name | escape }}*{{ item.count }}{{ item.unit | escape }} = {{ item.per_item | currency }}*{{ item.count }} = {{ item.total | currency }}</div>
+        <div>{{ item.name | escape }}*{{ item.count }} {{ item.unit | escape }} = {{ item.per_item | currency }}*{{ item.count }} = {{ item.total | currency }}</div>
         </li>
       {% endfor %}
       </ol>

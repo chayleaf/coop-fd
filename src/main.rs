@@ -910,7 +910,7 @@ async fn main() {
                                                     "num": i,
                                                     "name": item.name,
                                                     "count": item.count,
-                                                    "unit": if item.unit.is_empty() { "".to_owned() } else { " ".to_owned() + &item.unit },
+                                                    "unit": item.unit,
                                                     "per_item": item.per_item,
                                                     "total": item.total,
                                                 })
