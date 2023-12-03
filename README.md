@@ -15,3 +15,6 @@ Some of the features don't have a UI, because I wrote a
 ## License
 
 AGPL-3.0-or-later
+
+Some third-party JS libraries are bundled, see
+[static/README.md](static/README.md)

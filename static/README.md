@@ -1,0 +1,2 @@
+- fzf: [GitHub](https://github.com/ajitid/fzf-for-js) / [NPM](https://www.npmjs.com/package/fzf) ([BSD-3 license](https://github.com/ajitid/fzf-for-js/blob/357c8aedaeff3f1af190049fab1c8d03609e7aee/license.txt), Copyright (c) 2023, Ajit & contributors)
+- qr-scanner: [GitHub](https://github.com/nimiq/qr-scanner/) / [NPM](https://www.npmjs.com/package/qr-scanner) ([MIT license](https://github.com/nimiq/qr-scanner/blob/abcfe1bce2703721408d8ce7ebde94a359998506/LICENSE), Copyright (c) 2022 Nimiq, danimoh & contributors)
