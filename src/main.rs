@@ -997,9 +997,11 @@ async fn main() {
                         {
                             let mut list = list.write().await;
                             list.retain_mut(|list_item| {
+                                let lower = list_item.name.to_lowercase();
                                 for item in &rec.items {
-                                    if item.name == list_item.name {
+                                    if item.name.to_lowercase().starts_with(&lower) {
                                         list_item.amount -= item.count;
+                                        break;
                                     }
                                 }
                                 list_item.amount > 0.0001
