@@ -218,7 +218,7 @@ fn parse(data: &str, ret: &mut Receipt) -> Option<()> {
                 "НАЛИЧНЫМИ" => ret.total_cash = v,
                 "БЕЗНАЛИЧНЫМИ" => ret.total_card = v,
                 x if x.starts_with("СУММА НДС ЧЕКА ПО СТАВКЕ") => {
-                    ret.total_tax += v
+                    ret.total_tax += v;
                 }
                 _ => {}
             }
@@ -276,7 +276,7 @@ async fn fetch(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
             .unwrap_or_default()
             .as_str()
             .chars()
-            .filter(|x| x.is_ascii_digit())
+            .filter(char::is_ascii_digit)
             .collect::<String>();
         println!("captcha: {captcha}");
         if let Some(csrf) = form
@@ -456,8 +456,8 @@ async fn add_transaction(config: &Config, mut tr: Transaction) -> HashMap<String
     tokio::fs::write(path, b)
         .await
         .expect("failed to write transaction");
-    for (k, v) in tr.balance_changes.iter() {
-        let x = lock.entry(k.to_owned()).or_default();
+    for (k, v) in &tr.balance_changes {
+        let x = lock.entry(k.clone()).or_default();
         *x = x.checked_add(*v).expect("balance overflowed");
     }
     lock.retain(|_, v| *v != 0);
@@ -472,7 +472,7 @@ struct Config {
     ignore_qr_condition: String,
 }
 
-fn copy_ref<T: ?Sized>(t: &T) -> &T {
+const fn copy_ref<T: ?Sized>(t: &T) -> &T {
     t
 }
 
@@ -509,6 +509,13 @@ struct ListItem {
     amount: f64,
 }
 
+#[derive(Default)]
+struct Commodity {
+    unit: String,
+    last_time: chrono::NaiveDateTime,
+    count: usize,
+}
+
 async fn save_list(config: &Config, list: &[ListItem]) -> io::Result<()> {
     let mut path1 = config.data_path.clone();
     let mut path2 = config.data_path.clone();
@@ -526,8 +533,7 @@ async fn save_list(config: &Config, list: &[ListItem]) -> io::Result<()> {
 async fn main() {
     let config_path = std::env::vars_os()
         .find(|(k, _)| k == "CONFIG_FILE")
-        .map(|(_, v)| v)
-        .unwrap_or("config.json".into());
+        .map_or_else(|| "config.json".into(), |(_, v)| v);
     let config = tokio::fs::read(config_path)
         .await
         .expect("failed to read config.json");
@@ -642,7 +648,7 @@ async fn main() {
         .await
         .expect("failed to read transaction list entry")
     {
-        if !matches!(file.path().extension().and_then(|x| x.to_str()).map(|x| x.to_lowercase()), Some(x) if x.as_str() == "json")
+        if !matches!(file.path().extension().and_then(|x| x.to_str()).map(str::to_lowercase), Some(x) if x.as_str() == "json")
         {
             continue;
         }
@@ -662,23 +668,17 @@ async fn main() {
             paid: _,
         }) = tr.meta
         {
-            paid_receipts.insert(format!("{}_{}_{}", r#fn, i, fp));
+            paid_receipts.insert(format!("{fn}_{i}_{fp}"));
         }
-        for (k, v) in tr.balance_changes.iter() {
-            let x = balance.entry(k.to_owned()).or_default();
+        for (k, v) in &tr.balance_changes {
+            let x = balance.entry(k.clone()).or_default();
             *x = x.checked_add(*v).expect("balance overflowed");
         }
     }
     balance.retain(|_, v| *v != 0);
     BALANCE.set(balance.into()).unwrap();
 
-    #[derive(Default)]
-    struct Item {
-        unit: String,
-        last_time: chrono::NaiveDateTime,
-        count: usize,
-    }
-    let units = &*Box::leak(Box::new(DashMap::<String, Item>::new()));
+    let commodities = &*Box::leak(Box::new(DashMap::<String, Commodity>::new()));
     let path = data_path("parsed");
     let mut dir = tokio::fs::read_dir(path)
         .await
@@ -688,7 +688,7 @@ async fn main() {
         .await
         .expect("failed to read receipt list entry")
     {
-        if !matches!(file.path().extension().and_then(|x| x.to_str()).map(|x| x.to_lowercase()), Some(x) if x.as_str() == "json")
+        if !matches!(file.path().extension().and_then(|x| x.to_str()).map(str::to_lowercase), Some(x) if x.as_str() == "json")
         {
             continue;
         }
@@ -702,7 +702,7 @@ async fn main() {
             )
         });
         for item in rec.items {
-            let mut val = units.entry(item.name).or_default();
+            let mut val = commodities.entry(item.name).or_default();
             let val = val.value_mut();
             val.unit = item.unit;
             if let Ok(date) = chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M%S") {
@@ -832,14 +832,14 @@ async fn main() {
                             {
                                 let meta = f
                                     .get("comment")
-                                    .map(|x| TransactionMeta::Comment(x.to_owned()));
+                                    .map(|x| TransactionMeta::Comment(x.clone()));
                                 if let Some(to) = f.get("to") {
                                     if let Some(amt) = f.get("amount") {
                                         if let Some(amt) =
                                             amt.parse::<i64>().ok().filter(|x| *x != 0)
                                         {
+                                            let mut tr = Transaction::new(meta);
                                             if let Some(from) = f.get("from") {
-                                                let mut tr = Transaction::new(meta);
                                                 tr.pay(from, to, amt);
                                                 tr.finalize();
                                                 serde_json::to_string(
@@ -847,14 +847,12 @@ async fn main() {
                                                 )
                                                 .expect("balance serialization failed")
                                             } else {
-                                                let mut tr = Transaction::new(meta);
-                                                let total = amt;
                                                 for user in &config.usernames {
                                                     if user != to {
                                                         tr.pay(
                                                             user,
                                                             to,
-                                                            total
+                                                            amt
                                                                 / i64::try_from(
                                                                     config.usernames.len(),
                                                                 )
@@ -889,7 +887,7 @@ async fn main() {
         .route(
             "/list",
             axum::routing::get(|| {
-                let units = copy_ref(units);
+                let units = copy_ref(commodities);
                 let list_t = copy_ref(list_t);
                 let list = copy_ref(list);
                 async move {
@@ -957,7 +955,7 @@ async fn main() {
                                     }
                                 }
                                 if !added {
-                                    list.push(ListItem { name: name.to_owned(), amount });
+                                    list.push(ListItem { name: name.clone(), amount });
                                 }
                                 let _ = save_list(config, &list).await;
                             }
@@ -974,7 +972,7 @@ async fn main() {
                     let config = copy_ref(config);
                     let paid_receipts = copy_ref(paid_receipts);
                     let submitted = copy_ref(submitted_t);
-                    let units = copy_ref(units);
+                    let units = copy_ref(commodities);
                     let list = copy_ref(list);
                     async move {
                         let Some(r#fn) = f.get("fn") else {
@@ -991,7 +989,7 @@ async fn main() {
                         };
                         let mut path = config.data_path.clone();
                         path.push("parsed");
-                        path.push(format!("{}_{}_{}.json", r#fn, i, fp).replace(['/', '\\'], ""));
+                        path.push(format!("{fn}_{i}_{fp}.json").replace(['/', '\\'], ""));
                         let Ok(data) = tokio::fs::read(path).await else {
                             return axum::response::Html::from("missing recept cache".to_owned());
                         };
@@ -1012,7 +1010,7 @@ async fn main() {
                         }
                         let mut paid = HashMap::<String, BTreeSet<usize>>::new();
                         let mut per_item = HashMap::<usize, HashSet<String>>::new();
-                        for (k, v) in f.iter() {
+                        for (k, v) in &f {
                             let Some((username, idx)) = k.split_once('$') else {
                                 continue;
                             };
@@ -1032,19 +1030,19 @@ async fn main() {
                             groups.entry(k).or_default().push(v);
                         }
                         for v in groups.values_mut() {
-                            v.sort();
+                            v.sort_unstable();
                         }
                         let mut tr = Transaction::new(Some(TransactionMeta::Receipt {
-                            r#fn: r#fn.to_owned(),
-                            i: i.to_owned(),
-                            fp: fp.to_owned(),
+                            r#fn: r#fn.clone(),
+                            i: i.clone(),
+                            fp: fp.clone(),
                             paid,
                         }));
                         for (k, v) in &groups {
                             let total: u128 = v
                                 .iter()
                                 .filter_map(|x| rec.items.get(*x))
-                                .map(|x| x.total as u128)
+                                .map(|x| u128::from(x.total))
                                 .sum();
                             let total = u64::try_from(total).expect("receipt price too big");
                             for user in k {
@@ -1115,7 +1113,7 @@ async fn main() {
                     let add = copy_ref(add_t);
                     async move {
                         axum::response::Html::from(if let Some(q) = q {
-                            if let Some(username) = cookies.get("username").map(|x| x.value()) {
+                            if let Some(username) = cookies.get("username").map(axum_extra::extract::cookie::Cookie::value) {
                                 let mut rec = parse_qr(&q);
                                 if rec.r#fn.is_empty()
                                     || rec.fp.is_empty()
@@ -1176,7 +1174,7 @@ async fn main() {
                                         let config = copy_ref(config);
                                         tokio::spawn(async move {
                                             for _ in 0..8 {
-                                                if let Ok(true) = fetch(config, &mut rec).await {
+                                                if matches!(fetch(config, &mut rec).await, Ok(true)) {
                                                     let _ = tx.try_send(rec);
                                                     break;
                                                 }
