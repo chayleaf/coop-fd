@@ -1,11 +1,13 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     ffi::CStr,
+    io,
     path::PathBuf,
 };
 
 use axum::response::IntoResponse;
 use chrono::Utc;
+use dashmap::DashMap;
 use indexmap::IndexSet;
 use liquid_core::{Display_filter, Filter, FilterReflection, ParseFilter, Runtime, ValueView};
 use serde::{Deserialize, Serialize};
@@ -501,6 +503,25 @@ impl Filter for CurrencyFilter {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ListItem {
+    name: String,
+    amount: f64,
+}
+
+async fn save_list(config: &Config, list: &[ListItem]) -> io::Result<()> {
+    let mut path1 = config.data_path.clone();
+    let mut path2 = config.data_path.clone();
+    path1.push("list.json.tmp");
+    path2.push("list.json");
+    tokio::fs::write(
+        &path1,
+        serde_json::to_string(list).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?,
+    )
+    .await?;
+    tokio::fs::rename(path1, path2).await
+}
+
 #[tokio::main]
 async fn main() {
     let config_path = std::env::vars_os()
@@ -517,35 +538,105 @@ async fn main() {
         ret.push(x);
         ret
     };
+
     let (a, b, c) = tokio::join!(
         tokio::fs::create_dir_all(data_path("raw")),
         tokio::fs::create_dir_all(data_path("parsed")),
         tokio::fs::create_dir_all(data_path("transactions")),
     );
+    a.expect("failed to create data/raw");
+    b.expect("failed to create data/parsed");
+    c.expect("failed to create data/transactions");
+
+    // static
     let style = &*Box::leak(Box::new(
         tokio::fs::read_to_string("static/style.css")
             .await
-            .unwrap_or_default(),
+            .unwrap_or_else(|_| include_str!("../static/style.css").to_owned()),
     ));
+    let fzf = &*Box::leak(Box::new(
+        tokio::fs::read_to_string("static/fzf.js")
+            .await
+            .unwrap_or_else(|_| include_str!("../static/fzf.js").to_owned()),
+    ));
+    let qr_scanner_worker = &*Box::leak(Box::new(
+        tokio::fs::read_to_string("static/qr-scanner-worker.min.js")
+            .await
+            .unwrap_or_else(|_| include_str!("../static/qr-scanner-worker.min.js").to_owned()),
+    ));
+    let qr_scanner_worker_map = &*Box::leak(Box::new(
+        tokio::fs::read_to_string("static/qr-scanner-worker.min.js.map")
+            .await
+            .unwrap_or_else(|_| include_str!("../static/qr-scanner-worker.min.js.map").to_owned()),
+    ));
+    let qr_scanner_umd = &*Box::leak(Box::new(
+        tokio::fs::read_to_string("static/qr-scanner.umd.min.js")
+            .await
+            .unwrap_or_else(|_| include_str!("../static/qr-scanner.umd.min.js").to_owned()),
+    ));
+    let qr_scanner_umd_map = &*Box::leak(Box::new(
+        tokio::fs::read_to_string("static/qr-scanner.umd.min.js.map")
+            .await
+            .unwrap_or_else(|_| include_str!("../static/qr-scanner.umd.min.js.map").to_owned()),
+    ));
+
+    // templates
     let parser = liquid::ParserBuilder::with_stdlib()
         .filter(CurrencyFilter)
         .build()
         .unwrap();
-    let root = &*Box::leak(Box::new(parser.parse_file("static/index.html").unwrap()));
-    let submitted = &*Box::leak(Box::new(
-        parser.parse_file("static/submitted.html").unwrap(),
+    let root_t = &*Box::leak(Box::new(
+        parser
+            .parse(
+                &tokio::fs::read_to_string("templates/index.html")
+                    .await
+                    .unwrap_or_else(|_| include_str!("../templates/index.html").to_owned()),
+            )
+            .unwrap(),
     ));
-    let add = &*Box::leak(Box::new(parser.parse_file("static/add.html").unwrap()));
-    a.expect("failed to create data/raw");
-    b.expect("failed to create data/parsed");
-    c.expect("failed to create data/transactions");
+    let submitted_t = &*Box::leak(Box::new(
+        parser
+            .parse(
+                &tokio::fs::read_to_string("templates/submitted.html")
+                    .await
+                    .unwrap_or_else(|_| include_str!("../templates/submitted.html").to_owned()),
+            )
+            .unwrap(),
+    ));
+    let add_t = &*Box::leak(Box::new(
+        parser
+            .parse(
+                &tokio::fs::read_to_string("templates/add.html")
+                    .await
+                    .unwrap_or_else(|_| include_str!("../templates/add.html").to_owned()),
+            )
+            .unwrap(),
+    ));
+    let list_t = &*Box::leak(Box::new(
+        parser
+            .parse(
+                &tokio::fs::read_to_string("templates/list.html")
+                    .await
+                    .unwrap_or_else(|_| include_str!("../templates/list.html").to_owned()),
+            )
+            .unwrap(),
+    ));
+
+    let list: &RwLock<Vec<ListItem>> = &*Box::leak(Box::new(RwLock::new(
+        serde_json::from_str(
+            &tokio::fs::read_to_string(data_path("list.json"))
+                .await
+                .unwrap_or_else(|_| "[]".to_owned()),
+        )
+        .unwrap(),
+    )));
+
     let mut balance = HashMap::<String, i64>::new();
-    let mut path = config.data_path.clone();
-    path.push("transactions");
+    let paid_receipts = Box::leak(Box::new(dashmap::DashSet::<String>::new()));
+    let path = data_path("transactions");
     let mut dir = tokio::fs::read_dir(path)
         .await
         .expect("failed to read transaction list");
-    let paid_receipts = Box::leak(Box::new(dashmap::DashSet::<String>::new()));
     while let Some(file) = dir
         .next_entry()
         .await
@@ -580,18 +671,56 @@ async fn main() {
     }
     balance.retain(|_, v| *v != 0);
     BALANCE.set(balance.into()).unwrap();
+
+    let units = &*Box::leak(Box::new(DashMap::<String, String>::new()));
+    let path = data_path("parsed");
+    let mut dir = tokio::fs::read_dir(path)
+        .await
+        .expect("failed to read receipt list");
+    while let Some(file) = dir
+        .next_entry()
+        .await
+        .expect("failed to read receipt list entry")
+    {
+        if !matches!(file.path().extension().and_then(|x| x.to_str()).map(|x| x.to_lowercase()), Some(x) if x.as_str() == "json")
+        {
+            continue;
+        }
+        let data = tokio::fs::read(file.path())
+            .await
+            .expect("failed to read transaction");
+        let rec = serde_json::from_slice::<Receipt>(&data)
+            .unwrap_or_else(|err| panic!("failed to deserialize receipt {}: {err}", file.path().display()));
+        for item in rec.items {
+            units.insert(item.name, item.unit);
+        }
+    }
+
     let app = axum::Router::new()
         .route(
             "/",
             axum::routing::get(|| {
                 let config = copy_ref(config);
-                let root = copy_ref(root);
+                let root = copy_ref(root_t);
                 async move {
                     axum::response::Html::from(root.render(&liquid::object!({
                         "extra_qr_processing": format!("if({})return;", config.ignore_qr_condition),
                         "usernames": &config.usernames,
                     })).unwrap_or_else(|err| format!("Error: {err}")))
                 }
+            }),
+        )
+        .route(
+            "/fzf.js",
+            axum::routing::get(|| async {
+                (
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        axum::http::HeaderValue::from_static("text/javascript"),
+                    )],
+                    fzf.as_str(),
+                )
+                    .into_response()
             }),
         )
         .route(
@@ -602,7 +731,7 @@ async fn main() {
                         axum::http::header::CONTENT_TYPE,
                         axum::http::HeaderValue::from_static("text/javascript"),
                     )],
-                    include_str!("../qr-scanner.umd.min.js"),
+                    qr_scanner_umd.as_str(),
                 )
                     .into_response()
             }),
@@ -615,7 +744,7 @@ async fn main() {
                         axum::http::header::CONTENT_TYPE,
                         axum::http::HeaderValue::from_static("application/json"),
                     )],
-                    include_str!("../qr-scanner.umd.min.js.map"),
+                    qr_scanner_umd_map.as_str(),
                 )
                     .into_response()
             }),
@@ -628,7 +757,7 @@ async fn main() {
                         axum::http::header::CONTENT_TYPE,
                         axum::http::HeaderValue::from_static("text/javascript"),
                     )],
-                    include_str!("../qr-scanner-worker.min.js"),
+                    qr_scanner_worker.as_str(),
                 )
                     .into_response()
             }),
@@ -641,7 +770,7 @@ async fn main() {
                         axum::http::header::CONTENT_TYPE,
                         axum::http::HeaderValue::from_static("application/json"),
                     )],
-                    include_str!("../qr-scanner-worker.min.js.map"),
+                    qr_scanner_worker_map.as_str(),
                 )
                     .into_response()
             }),
@@ -654,10 +783,10 @@ async fn main() {
                         axum::http::header::CONTENT_TYPE,
                         axum::http::HeaderValue::from_static("text/css"),
                     )],
-                    style.as_str()
+                    style.as_str(),
                 )
                     .into_response()
-            })
+            }),
         )
         .route(
             "/api/balance",
@@ -667,60 +796,157 @@ async fn main() {
                         axum::http::header::CONTENT_TYPE,
                         axum::http::HeaderValue::from_static("application/json"),
                     )],
-                    serde_json::to_string(&*BALANCE.get().unwrap().read().await).expect("balance serialization failed"),
+                    serde_json::to_string(&*BALANCE.get().unwrap().read().await)
+                        .expect("balance serialization failed"),
                 )
                     .into_response()
-            })
+            }),
         )
         .route(
             "/api/pay",
-            axum::routing::post(|axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
-                let config = copy_ref(config);
-                async move {
-                    (
-                        [(
-                            axum::http::header::CONTENT_TYPE,
-                            axum::http::HeaderValue::from_static("application/json"),
-                        )],
-                        {
-                            let meta = f.get("comment").map(|x| TransactionMeta::Comment(x.to_owned()));
-                            if let Some(to) = f.get("to") {
-                                if let Some(amt) = f.get("amount") {
-                                    if let Some(amt) = amt.parse::<i64>().ok().filter(|x| *x != 0) {
-                                        if let Some(from) = f.get("from") {
-                                            let mut tr = Transaction::new(meta);
-                                            tr.pay(from, to, amt);
-                                            tr.finalize();
-                                            serde_json::to_string(&add_transaction(config, tr).await).expect("balance serialization failed")
-                                        } else {
-                                            let mut tr = Transaction::new(meta);
-                                            let total = amt;
-                                            for user in &config.usernames {
-                                                if user != to {
-                                                    tr.pay(
-                                                        user,
-                                                        to,
-                                                        total / i64::try_from(config.usernames.len()).expect("usize->i64 conversion failed"),
-                                                    );
+            axum::routing::post(
+                |axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
+                    let config = copy_ref(config);
+                    async move {
+                        (
+                            [(
+                                axum::http::header::CONTENT_TYPE,
+                                axum::http::HeaderValue::from_static("application/json"),
+                            )],
+                            {
+                                let meta = f
+                                    .get("comment")
+                                    .map(|x| TransactionMeta::Comment(x.to_owned()));
+                                if let Some(to) = f.get("to") {
+                                    if let Some(amt) = f.get("amount") {
+                                        if let Some(amt) =
+                                            amt.parse::<i64>().ok().filter(|x| *x != 0)
+                                        {
+                                            if let Some(from) = f.get("from") {
+                                                let mut tr = Transaction::new(meta);
+                                                tr.pay(from, to, amt);
+                                                tr.finalize();
+                                                serde_json::to_string(
+                                                    &add_transaction(config, tr).await,
+                                                )
+                                                .expect("balance serialization failed")
+                                            } else {
+                                                let mut tr = Transaction::new(meta);
+                                                let total = amt;
+                                                for user in &config.usernames {
+                                                    if user != to {
+                                                        tr.pay(
+                                                            user,
+                                                            to,
+                                                            total
+                                                                / i64::try_from(
+                                                                    config.usernames.len(),
+                                                                )
+                                                                .expect(
+                                                                    "usize->i64 conversion failed",
+                                                                ),
+                                                        );
+                                                    }
                                                 }
+                                                tr.finalize();
+                                                serde_json::to_string(
+                                                    &add_transaction(config, tr).await,
+                                                )
+                                                .expect("balance serialization failed")
                                             }
-                                            tr.finalize();
-                                            serde_json::to_string(&add_transaction(config, tr).await).expect("balance serialization failed")
+                                        } else {
+                                            "invalid amount".to_owned()
                                         }
                                     } else {
-                                        "invalid amount".to_owned()
+                                        "missing amount".to_owned()
                                     }
                                 } else {
-                                    "missing amount".to_owned()
+                                    "missing to".to_owned()
                                 }
-                            } else {
-                                "missing to".to_owned()
+                            },
+                        )
+                            .into_response()
+                    }
+                },
+            ),
+        )
+        .route(
+            "/list",
+            axum::routing::get(|| {
+                let units = copy_ref(units);
+                let list_t = copy_ref(list_t);
+                let list = copy_ref(list);
+                async move {
+                    let items = units
+                        .iter()
+                        .map(|item| {
+                            liquid::object!({
+                                "name": item.key(),
+                                "unit": item.value(),
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    axum::response::Html::from(
+                        list_t
+                            .render(&liquid::object!({
+                                "items": items,
+                                "list": list.read().await.iter().map(|x| {
+                                    liquid::object!({
+                                        "name": x.name,
+                                        "amount": x.amount,
+                                        "unit": units.get(&x.name).map(|x| format!(" {}", x.value())).unwrap_or_default()
+                                    })
+                                }).collect::<Vec<_>>(),
+                            }))
+                            .unwrap_or_else(|err| format!("Error: {err}")),
+                    )
+                }
+            }),
+        )
+        .route(
+            "/listremove",
+            axum::routing::post(
+                |axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
+                    let config = copy_ref(config);
+                    let list = copy_ref(list);
+                    async move {
+                        if let Some(name) = f.get("name") {
+                            let mut list = list.write().await;
+                            list.retain(|x| &x.name != name);
+                            let _ = save_list(config, &list).await;
+                        }
+                        axum::response::Redirect::to("list")
+                    }
+                },
+            ),
+        )
+        .route(
+            "/listadd",
+            axum::routing::post(
+                |axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
+                    let config = copy_ref(config);
+                    let list = copy_ref(list);
+                    async move {
+                        if let Some(name) = f.get("name") {
+                            if let Some(amount) = f.get("amount").and_then(|x| x.parse::<f64>().ok()) {
+                                let mut list = list.write().await;
+                                let mut added = false;
+                                for item in &mut *list {
+                                    if &item.name == name {
+                                        item.amount += amount;
+                                        added = true;
+                                    }
+                                }
+                                if !added {
+                                    list.push(ListItem { name: name.to_owned(), amount });
+                                }
+                                let _ = save_list(config, &list).await;
                             }
                         }
-                    )
-                        .into_response()
-                }
-            })
+                        axum::response::Redirect::to("list")
+                    }
+                },
+            ),
         )
         .route(
             "/submit",
@@ -728,7 +954,9 @@ async fn main() {
                 |axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
                     let config = copy_ref(config);
                     let paid_receipts = copy_ref(paid_receipts);
-                    let submitted = copy_ref(submitted);
+                    let submitted = copy_ref(submitted_t);
+                    let units = copy_ref(units);
+                    let list = copy_ref(list);
                     async move {
                         let Some(r#fn) = f.get("fn") else {
                             return axum::response::Html::from("missing fn".to_owned());
@@ -740,7 +968,7 @@ async fn main() {
                             return axum::response::Html::from("missing fp".to_owned());
                         };
                         let Some(username) = f.get("username") else {
-                            return axum::response::Html::from("missing username".to_owned())
+                            return axum::response::Html::from("missing username".to_owned());
                         };
                         let mut path = config.data_path.clone();
                         path.push("parsed");
@@ -751,6 +979,18 @@ async fn main() {
                         let Ok(rec) = serde_json::from_slice::<Receipt>(&data) else {
                             return axum::response::Html::from("invalid recept cache".to_owned());
                         };
+                        {
+                            let mut list = list.write().await;
+                            list.retain_mut(|list_item| {
+                                for item in &rec.items {
+                                    if item.name == list_item.name {
+                                        list_item.amount -= item.count;
+                                    }
+                                }
+                                list_item.amount > 0.0001
+                            });
+                            let _ = save_list(config, &list).await;
+                        }
                         let mut paid = HashMap::<String, BTreeSet<usize>>::new();
                         let mut per_item = HashMap::<usize, HashSet<String>>::new();
                         for (k, v) in f.iter() {
@@ -761,7 +1001,7 @@ async fn main() {
                                 continue;
                             }
                             let Ok(idx) = idx.parse::<usize>() else {
-                                continue
+                                continue;
                             };
                             paid.entry(username.to_owned()).or_default().insert(idx);
                             per_item.entry(idx).or_default().insert(username.to_owned());
@@ -782,46 +1022,72 @@ async fn main() {
                             paid,
                         }));
                         for (k, v) in &groups {
-                            let total: u128 = v.iter().filter_map(|x| rec.items.get(*x)).map(|x| x.total as u128).sum();
+                            let total: u128 = v
+                                .iter()
+                                .filter_map(|x| rec.items.get(*x))
+                                .map(|x| x.total as u128)
+                                .sum();
                             let total = u64::try_from(total).expect("receipt price too big");
                             for user in k {
                                 if user != username {
                                     tr.pay(
                                         user,
                                         username,
-                                        (total / u64::try_from(k.len()).expect("wtf, 128-bit cpus???"))
-                                            .try_into()
-                                            .expect("u64->i64 conversion failed"),
+                                        (total
+                                            / u64::try_from(k.len())
+                                                .expect("wtf, 128-bit cpus???"))
+                                        .try_into()
+                                        .expect("u64->i64 conversion failed"),
                                     );
                                 }
                             }
                         }
                         tr.finalize();
                         let bal = add_transaction(config, tr).await;
+                        for item in &rec.items {
+                            units.insert(item.name.clone(), item.unit.clone());
+                        }
                         if let Some(fnifp) = rec.fnifp() {
                             paid_receipts.insert(fnifp);
                         }
                         let mut bal = bal.into_iter().collect::<Vec<_>>();
-                        bal.sort_by_key(|(k, _)| config.usernames.iter().enumerate().find(|(_, x)| &k == x).map(|x| x.0));
-                        let bal = bal.into_iter().map(|x| liquid::object!({
-                            "username": x.0,
-                            "balance": x.1,
-                        })).collect::<Vec<_>>();
-                        axum::response::Html::from(submitted.render(&liquid::object!({
-                            "balance": bal,
-                            "username": username,
-                        })).unwrap_or_else(|err| format!("Error: {err}")))
+                        bal.sort_by_key(|(k, _)| {
+                            config
+                                .usernames
+                                .iter()
+                                .enumerate()
+                                .find(|(_, x)| &k == x)
+                                .map(|x| x.0)
+                        });
+                        let bal = bal
+                            .into_iter()
+                            .map(|x| {
+                                liquid::object!({
+                                    "username": x.0,
+                                    "balance": x.1,
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        axum::response::Html::from(
+                            submitted
+                                .render(&liquid::object!({
+                                    "balance": bal,
+                                    "username": username,
+                                }))
+                                .unwrap_or_else(|err| format!("Error: {err}")),
+                        )
                     }
-                }
-            )
+                },
+            ),
         )
         .route(
             "/add",
             axum::routing::get(
-                |axum::extract::RawQuery(q): axum::extract::RawQuery, cookies: axum_extra::extract::CookieJar| {
+                |axum::extract::RawQuery(q): axum::extract::RawQuery,
+                 cookies: axum_extra::extract::CookieJar| {
                     let config = copy_ref(config);
                     let paid_receipts = copy_ref(paid_receipts);
-                    let add = copy_ref(add);
+                    let add = copy_ref(add_t);
                     async move {
                         axum::response::Html::from(if let Some(q) = q {
                             if let Some(username) = cookies.get("username").map(|x| x.value()) {
@@ -916,7 +1182,8 @@ async fn main() {
                                                 })
                                             }).collect::<Vec<_>>(),
                                             "usernames": &config.usernames,
-                                        })).unwrap_or_else(|err| format!("Error: {err}"))
+                                        }))
+                                        .unwrap_or_else(|err| format!("Error: {err}"))
                                     } else {
                                         "error".to_owned()
                                     }
