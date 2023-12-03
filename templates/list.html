@@ -31,7 +31,7 @@
         const updateText = () => {
           list.innerHTML = "";
           if (text.value) {
-            unit.innerText = entries[text.value] || "";
+            unit.innerText = (entries[text.value] || {}).unit || "";
             const items = f.find(text.value);
             for (let i = 0; i < items.length; i++) {
               const item = items[i].item.normalize();
@@ -41,7 +41,7 @@
               a.href = "javascript:void(0)";
               a.addEventListener('click', () => {
                 text.value = item;
-                unit.innerText = entries[item] || "";
+                unit.innerText = (entries[item] || {}).unit || "";
               });
               a.appendChild(document.createTextNode(item));
               li.appendChild(a);
