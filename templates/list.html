@@ -8,7 +8,7 @@
     <script>
       const entries = {
         {% for item in items %}
-          "{{ item.name }}": "{{ item.unit }}",
+          "{{ item.name }}": { unit: "{{ item.unit }}", count: "{{ item.count }}", last_timestamp: "{{ item.last_timestamp }}" },
         {% endfor %}
       };
       document.addEventListener('DOMContentLoaded', () => {
@@ -16,7 +16,17 @@
         const text = document.getElementById('text');
         const amt = document.getElementById('amount');
         const unit = document.getElementById('unit');
-        const f = new fzf.Fzf(Object.keys(entries), { limit: 5, casing: "case-insensitive" });
+        const f = new fzf.Fzf(Object.keys(entries), {
+          casing: "case-insensitive",
+          limit: 5,
+          tiebreakers: [
+            // -1 = choose A
+            //  1 = choose B
+            ((a, b) => entries[b.item].count - entries[a.item].count),
+            ((a, b) => entries[b.item].last_timestamp - entries[a.item].last_timestamp),
+            fzf.byStartAsc,
+          ]
+        });
         const updateText = () => {
           list.innerHTML = "";
           if (text.value) {

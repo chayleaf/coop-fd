@@ -672,7 +672,13 @@ async fn main() {
     balance.retain(|_, v| *v != 0);
     BALANCE.set(balance.into()).unwrap();
 
-    let units = &*Box::leak(Box::new(DashMap::<String, String>::new()));
+    #[derive(Default)]
+    struct Item {
+        unit: String,
+        last_time: chrono::NaiveDateTime,
+        count: usize,
+    }
+    let units = &*Box::leak(Box::new(DashMap::<String, Item>::new()));
     let path = data_path("parsed");
     let mut dir = tokio::fs::read_dir(path)
         .await
@@ -689,10 +695,20 @@ async fn main() {
         let data = tokio::fs::read(file.path())
             .await
             .expect("failed to read transaction");
-        let rec = serde_json::from_slice::<Receipt>(&data)
-            .unwrap_or_else(|err| panic!("failed to deserialize receipt {}: {err}", file.path().display()));
+        let rec = serde_json::from_slice::<Receipt>(&data).unwrap_or_else(|err| {
+            panic!(
+                "failed to deserialize receipt {}: {err}",
+                file.path().display()
+            )
+        });
         for item in rec.items {
-            units.insert(item.name, item.unit);
+            let mut val = units.entry(item.name).or_default();
+            let val = val.value_mut();
+            val.unit = item.unit;
+            if let Ok(date) = chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M%S") {
+                val.last_time = date;
+            }
+            val.count += 1;
         }
     }
 
@@ -880,9 +896,12 @@ async fn main() {
                     let items = units
                         .iter()
                         .map(|item| {
+                            let val = item.value();
                             liquid::object!({
                                 "name": item.key(),
-                                "unit": item.value(),
+                                "unit": val.unit,
+                                "count": val.count,
+                                "last_timestamp": val.last_time.timestamp(),
                             })
                         })
                         .collect::<Vec<_>>();
@@ -894,7 +913,7 @@ async fn main() {
                                     liquid::object!({
                                         "name": x.name,
                                         "amount": x.amount,
-                                        "unit": units.get(&x.name).map(|x| format!(" {}", x.value())).unwrap_or_default()
+                                        "unit": units.get(&x.name).map(|x| format!(" {}", x.value().unit)).unwrap_or_default()
                                     })
                                 }).collect::<Vec<_>>(),
                             }))
@@ -1045,7 +1064,13 @@ async fn main() {
                         tr.finalize();
                         let bal = add_transaction(config, tr).await;
                         for item in &rec.items {
-                            units.insert(item.name.clone(), item.unit.clone());
+                            let mut val = units.entry(item.name.clone()).or_default();
+                            let val = val.value_mut();
+                            val.unit = item.unit.clone();
+                            if let Ok(date) = chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M%S") {
+                                val.last_time = date;
+                            }
+                            val.count += 1;
                         }
                         if let Some(fnifp) = rec.fnifp() {
                             paid_receipts.insert(fnifp);
