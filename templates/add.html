@@ -9,7 +9,7 @@
   <body>
     <h3>Чек на <b>{{ total | currency }}</b> рублей (платит <b>{{ username | escape }}</b>)</h3>
     {% if already_paid %}
-      <h1>Чек уже был оплачен, возможно, вы ошиблись!</h1>
+    <h1>Чек уже был оплачен, возможно, вы ошиблись!</h1>
     {% endif %}
     <form action="submit" method="post">
       <input type="hidden" name="fn" value="{{ fn | escape }}"></input>
@@ -17,14 +17,14 @@
       <input type="hidden" name="fp" value="{{ fp | escape }}"></input>
       <input type="hidden" name="username" value="{{ username | escape }}"></input>
       <ol>
-      {% for item in items %}
+        {% for item in items %}
         <li>
-        {% for user in usernames %}
+          {% for user in usernames %}
           <input type="checkbox" name="{{ user | escape }}${{ item.num }}" checked="true">{{ user | escape }}</input>
-        {% endfor %}
-        <div>{{ item.name | escape }}*{{ item.count }} {{ item.unit | escape }} = {{ item.per_item | currency }}*{{ item.count }} = {{ item.total | currency }}</div>
+          {% endfor %}
+          <div>{{ item.name | escape }}*{{ item.count }} {{ item.unit | escape }} = {{ item.per_item | currency }}*{{ item.count }} = {{ item.total | currency }}</div>
         </li>
-      {% endfor %}
+        {% endfor %}
       </ol>
       <input type="submit" value="Отправить"/>
     </form>

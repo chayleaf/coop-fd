@@ -503,6 +503,32 @@ impl Filter for CurrencyFilter {
     }
 }
 
+#[derive(Clone, Debug, Default, Display_filter, ParseFilter, FilterReflection)]
+#[name = "cescape"]
+#[filter(
+    name = "cescape",
+    description = "C-style string escape",
+    parsed(CEscapeFilter)
+)]
+pub struct CEscapeFilter;
+
+impl Filter for CEscapeFilter {
+    fn evaluate(
+        &self,
+        input: &dyn ValueView,
+        _runtime: &dyn Runtime,
+    ) -> liquid_core::Result<liquid_core::Value> {
+        input
+            .as_scalar()
+            .map(|scal| {
+                liquid_core::Value::Scalar(
+                    scal.to_kstr().escape_default().collect::<String>().into(),
+                )
+            })
+            .ok_or_else(|| liquid_core::Error::with_msg("cescape expects a string"))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct ListItem {
     name: String,
@@ -589,6 +615,7 @@ async fn main() {
     // templates
     let parser = liquid::ParserBuilder::with_stdlib()
         .filter(CurrencyFilter)
+        .filter(CEscapeFilter)
         .build()
         .unwrap();
     let root_t = &*Box::leak(Box::new(
@@ -598,7 +625,7 @@ async fn main() {
                     .await
                     .unwrap_or_else(|_| include_str!("../templates/index.html").to_owned()),
             )
-            .unwrap(),
+            .unwrap_or_else(|err| panic!("index:\n{}", err)),
     ));
     let submitted_t = &*Box::leak(Box::new(
         parser
@@ -607,7 +634,7 @@ async fn main() {
                     .await
                     .unwrap_or_else(|_| include_str!("../templates/submitted.html").to_owned()),
             )
-            .unwrap(),
+            .unwrap_or_else(|err| panic!("submitted:\n{}", err)),
     ));
     let add_t = &*Box::leak(Box::new(
         parser
@@ -616,7 +643,7 @@ async fn main() {
                     .await
                     .unwrap_or_else(|_| include_str!("../templates/add.html").to_owned()),
             )
-            .unwrap(),
+            .unwrap_or_else(|err| panic!("add:\n{}", err)),
     ));
     let list_t = &*Box::leak(Box::new(
         parser
@@ -625,7 +652,7 @@ async fn main() {
                     .await
                     .unwrap_or_else(|_| include_str!("../templates/list.html").to_owned()),
             )
-            .unwrap(),
+            .unwrap_or_else(|err| panic!("list:\n{}", err)),
     ));
 
     let list: &RwLock<Vec<ListItem>> = &*Box::leak(Box::new(RwLock::new(
@@ -715,9 +742,9 @@ async fn main() {
             "/",
             axum::routing::get(|| {
                 let config = copy_ref(config);
-                let root = copy_ref(root_t);
+                let root_t = copy_ref(root_t);
                 async move {
-                    axum::response::Html::from(root.render(&liquid::object!({
+                    axum::response::Html::from(root_t.render(&liquid::object!({
                         "extra_qr_processing": format!("if({})return;", config.ignore_qr_condition),
                         "usernames": &config.usernames,
                     })).unwrap_or_else(|err| format!("Error: {err}")))
@@ -969,7 +996,7 @@ async fn main() {
                 |axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
                     let config = copy_ref(config);
                     let paid_receipts = copy_ref(paid_receipts);
-                    let submitted = copy_ref(submitted_t);
+                    let submitted_t = copy_ref(submitted_t);
                     let units = copy_ref(commodities);
                     let list = copy_ref(list);
                     async move {
@@ -994,6 +1021,7 @@ async fn main() {
                         let Ok(rec) = serde_json::from_slice::<Receipt>(&data) else {
                             return axum::response::Html::from("invalid recept cache".to_owned());
                         };
+                        let mut removed = Vec::<String>::new();
                         {
                             let mut list = list.write().await;
                             list.retain_mut(|list_item| {
@@ -1004,7 +1032,11 @@ async fn main() {
                                         break;
                                     }
                                 }
-                                list_item.amount > 0.0001
+                                let ret = list_item.amount > 0.0001;
+                                if !ret {
+                                    removed.push(list_item.name.clone());
+                                }
+                                ret
                             });
                             let _ = save_list(config, &list).await;
                         }
@@ -1060,7 +1092,7 @@ async fn main() {
                             }
                         }
                         tr.finalize();
-                        let bal = add_transaction(config, tr).await;
+                        let balance = add_transaction(config, tr).await;
                         for item in &rec.items {
                             let mut val = units.entry(item.name.clone()).or_default();
                             let val = val.value_mut();
@@ -1073,8 +1105,8 @@ async fn main() {
                         if let Some(fnifp) = rec.fnifp() {
                             paid_receipts.insert(fnifp);
                         }
-                        let mut bal = bal.into_iter().collect::<Vec<_>>();
-                        bal.sort_by_key(|(k, _)| {
+                        let mut balance = balance.into_iter().collect::<Vec<_>>();
+                        balance.sort_by_key(|(k, _)| {
                             config
                                 .usernames
                                 .iter()
@@ -1082,20 +1114,21 @@ async fn main() {
                                 .find(|(_, x)| &k == x)
                                 .map(|x| x.0)
                         });
-                        let bal = bal
+                        let balance = balance
                             .into_iter()
-                            .map(|x| {
+                            .map(|(username, balance)| {
                                 liquid::object!({
-                                    "username": x.0,
-                                    "balance": x.1,
+                                    "username": username,
+                                    "balance": balance,
                                 })
                             })
                             .collect::<Vec<_>>();
                         axum::response::Html::from(
-                            submitted
+                            submitted_t
                                 .render(&liquid::object!({
-                                    "balance": bal,
+                                    "balance": balance,
                                     "username": username,
+                                    "removed": removed,
                                 }))
                                 .unwrap_or_else(|err| format!("Error: {err}")),
                         )
@@ -1110,7 +1143,7 @@ async fn main() {
                  cookies: axum_extra::extract::CookieJar| {
                     let config = copy_ref(config);
                     let paid_receipts = copy_ref(paid_receipts);
-                    let add = copy_ref(add_t);
+                    let add_t = copy_ref(add_t);
                     async move {
                         axum::response::Html::from(if let Some(q) = q {
                             if let Some(username) = cookies.get("username").map(axum_extra::extract::cookie::Cookie::value) {
@@ -1187,7 +1220,7 @@ async fn main() {
                                     drop(tx);
                                     if let Some(rec) = rx.recv().await {
                                         drop(rx);
-                                        add.render(&liquid::object!({
+                                        add_t.render(&liquid::object!({
                                             "total": rec.total,
                                             "username": username,
                                             "already_paid": paid_receipts.contains(&fnifp),

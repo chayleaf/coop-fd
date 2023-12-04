@@ -8,7 +8,7 @@
     <script>
       const entries = {
         {% for item in items %}
-          "{{ item.name }}": { unit: "{{ item.unit }}", count: {{ item.count }}, last_timestamp: {{ item.last_timestamp }} },
+        "{{ item.name | cescape }}": { unit: "{{ item.unit | cescape }}", count: {{ item.count }}, last_timestamp: {{ item.last_timestamp }} },
         {% endfor %}
       };
       document.addEventListener('DOMContentLoaded', () => {
@@ -68,9 +68,9 @@
     <hr/>
     <ul style="list-style-type:none">
       {% for item in list %}
-        <li><form action="listremove" method="post"><input type="hidden" name="name" value="{{item.name | escape}}" /><input type="submit" value="X" />
-          {{ item.name | escape }} ({{ item.amount }}{{ item.unit | escape }})
-        </form></li>
+      <li><form action="listremove" method="post"><input type="hidden" name="name" value="{{item.name | escape}}" /><input type="submit" value="X" />
+        {{ item.name | escape }} ({{ item.amount }}{{ item.unit | escape }})
+      </form></li>
       {% endfor %}
     </ul>
   </body>

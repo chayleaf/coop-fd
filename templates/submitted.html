@@ -9,12 +9,22 @@
   <body>
     Платёж совершён! Новый баланс:
     <ul>
-    {% for info in balance %}
-    <li>{% if info.username == username %}<b>{% endif %}
+      {% for info in balance %}
+      <li>{% if info.username == username %}<b>{% endif %}
         {{ info.username | escape }}: {{ info.balance | currency }}
-    {% if info.username == username %}</b>{% endif %}</li>
-    {% endfor %}
+      {% if info.username == username %}</b>{% endif %}</li>
+      {% endfor %}
     </ul>
+    <hr/>
+    {% unless removed == empty %}
+    Удалённые предметы из списка покупок:
+    <ul>
+      {% for item in removed %}
+      <li>{{ item | escape }}</li>
+      {% endfor %}
+    </ul>
+    <hr/>
+    {% endunless %}
     <a href="."><button>Добавить ещё чек</button></a>
   </body>
 </html>
