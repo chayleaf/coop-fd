@@ -1102,7 +1102,7 @@ async fn main() {
                             let mut val = units.entry(item.name.clone()).or_default();
                             let val = val.value_mut();
                             val.unit = item.unit.clone();
-                            if let Ok(date) = chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M%S") {
+                            if let Ok(date) = chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M") {
                                 val.last_time = date;
                             }
                             val.count += 1;
