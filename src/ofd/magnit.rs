@@ -264,10 +264,9 @@ fn visit_expr(expr: &Expr) -> Vec<ZulNode> {
                 children,
             }]
         }
-        Expr::CallExpr(expr) => expr
-            .arguments()
-            .and_then(|args| args.args().next())
-            .map_or_else(Vec::new, |arg| visit_expr(&arg)),
+        Expr::CallExpr(expr) => expr.arguments().map_or_else(Vec::new, |args| {
+            args.args().flat_map(|arg| visit_expr(&arg)).collect()
+        }),
         Expr::FnExpr(expr) => expr
             .body()
             .map_or_else(Vec::new, |stmt| visit_stmt(&Stmt::BlockStmt(stmt))),
