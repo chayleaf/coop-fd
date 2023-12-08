@@ -1,78 +1,83 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <link rel="preload" href="style.css" as="style">
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="style.css" rel="stylesheet">
-    <script src="fzf.js"></script>
-    <script>
-      const entries = {
-        {% for item in items %}
-        "{{ item.name | cescape }}": { unit: "{{ item.unit | cescape }}", count: {{ item.count }}, last_timestamp: {{ item.last_timestamp }} },
-        {% endfor %}
-      };
-      document.addEventListener('DOMContentLoaded', () => {
-        const list = document.getElementById('list');
-        const text = document.getElementById('text');
-        const amt = document.getElementById('amount');
-        const unit = document.getElementById('unit');
-        const f = new fzf.Fzf(Object.keys(entries), {
-          casing: "case-insensitive",
-          limit: 5,
-          tiebreakers: [
-            // -1 = choose A
-            //  1 = choose B
-            ((a, b) => entries[b.item].count - entries[a.item].count),
-            ((a, b) => (b.start == 0) - (a.start == 0)),
-            ((a, b) => entries[b.item].last_timestamp - entries[a.item].last_timestamp),
-            fzf.byStartAsc,
-          ]
-        });
-        const updateText = () => {
-          list.innerHTML = "";
-          if (text.value) {
-            unit.innerText = (entries[text.value] || {}).unit || "";
-            const items = f.find(text.value);
-            for (let i = 0; i < items.length; i++) {
-              const item = items[i].item.normalize();
-              /* <li><a href="javascript:void(0)">{item}</a></li> */
-              const li = document.createElement('li');
-              const a = document.createElement('a');
-              a.href = "javascript:void(0)";
-              a.addEventListener('click', () => {
-                text.value = item;
-                unit.innerText = (entries[item] || {}).unit || "";
-              });
-              a.appendChild(document.createTextNode(item));
-              li.appendChild(a);
-              list.appendChild(li);
-            }
-          }
-        };
-        text.addEventListener('input', updateText);
-        text.value = "";
-        amt.value = "1";
-        updateText();
-      });
-    </script>
-  </head>
-  <body>
-    <form action="listadd" method="post">
-      <input placeholder="Наименование товара" id="text" name="name" />
-      x
-      <input id="amount" name="amount" style="width:4em" type="number" step="any" />
-      <span id="unit"></span>
-      <input type="submit" value="Добавить"/>
-    </form>
-    <ul id="list"></ul>
-    <hr/>
-    <ul style="list-style-type:none">
-      {% for item in list %}
-      <li><form action="listremove" method="post"><input type="hidden" name="name" value="{{item.name | escape}}" /><input type="submit" value="X" />
-        {{ item.name | escape }} ({{ item.amount }}{{ item.unit | escape }})
-      </form></li>
+
+<head>
+  <link rel="preload" href="style.css" as="style">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="style.css" rel="stylesheet">
+  <script src="fzf.js"></script>
+  <script>
+    const entries = {
+      {% for item in items %}
+      "{{ item.name | cescape }}": {unit: "{{ item.unit | cescape }}", count: {{item.count}}, last_timestamp: {{item.last_timestamp}} },
       {% endfor %}
-    </ul>
-  </body>
+    };
+    document.addEventListener('DOMContentLoaded', () => {
+      const list = document.getElementById('list');
+      const text = document.getElementById('text');
+      const amt = document.getElementById('amount');
+      const unit = document.getElementById('unit');
+      const f = new fzf.Fzf(Object.keys(entries), {
+        casing: "case-insensitive",
+        limit: 5,
+        tiebreakers: [
+          // -1 = choose A
+          //  1 = choose B
+          ((a, b) => entries[b.item].count - entries[a.item].count),
+          ((a, b) => (b.start == 0) - (a.start == 0)),
+          ((a, b) => entries[b.item].last_timestamp - entries[a.item].last_timestamp),
+          fzf.byStartAsc,
+        ]
+      });
+      const updateText = () => {
+        list.innerHTML = "";
+        if (text.value) {
+          unit.innerText = (entries[text.value] || {}).unit || "";
+          const items = f.find(text.value);
+          for (let i = 0; i < items.length; i++) {
+            const item = items[i].item.normalize();
+            /* <li><a href="javascript:void(0)">{item}</a></li> */
+            const li = document.createElement('li');
+            const a = document.createElement('a');
+            a.href = "javascript:void(0)";
+            a.addEventListener('click', () => {
+              text.value = item;
+              unit.innerText = (entries[item] || {}).unit || "";
+            });
+            a.appendChild(document.createTextNode(item));
+            li.appendChild(a);
+            list.appendChild(li);
+          }
+        }
+      };
+      text.addEventListener('input', updateText);
+      text.value = "";
+      amt.value = "1";
+      updateText();
+    });
+  </script>
+</head>
+
+<body>
+  <form action="listadd" method="post">
+    <input placeholder="Наименование товара" id="text" name="name" />
+    x
+    <input id="amount" name="amount" style="width:4em" type="number" step="any" />
+    <span id="unit"></span>
+    <input type="submit" value="Добавить" />
+  </form>
+  <ul id="list"></ul>
+  <hr />
+  <ul style="list-style-type:none">
+    {% for item in list %}
+    <li>
+      <form action="listremove" method="post"><input type="hidden" name="name" value="{{ item.name | escape }}" /><input type="submit" value="X" />
+        {{ item.name | escape }} ({{ item.amount }}{{ item.unit | escape }})
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</body>
+
 </html>

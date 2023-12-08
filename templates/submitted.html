@@ -1,30 +1,33 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <link rel="preload" href="style.css" as="style">
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="style.css" rel="stylesheet">
-  </head>
-  <body>
-    Платёж совершён! Новый баланс:
-    <ul>
-      {% for info in balance %}
-      <li>{% if info.username == username %}<b>{% endif %}
+
+<head>
+  <link rel="preload" href="style.css" as="style">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="style.css" rel="stylesheet">
+</head>
+
+<body>
+  Платёж совершён! Новый баланс:
+  <ul>
+    {% for info in balance %}
+    <li>{% if info.username == username %}<b>{% endif %}
         {{ info.username | escape }}: {{ info.balance | currency }}
-      {% if info.username == username %}</b>{% endif %}</li>
-      {% endfor %}
-    </ul>
-    <hr/>
-    {% unless removed == empty %}
-    Удалённые предметы из списка покупок:
-    <ul>
-      {% for item in removed %}
-      <li>{{ item | escape }}</li>
-      {% endfor %}
-    </ul>
-    <hr/>
-    {% endunless %}
-    <a href="."><button>Добавить ещё чек</button></a>
-  </body>
+        {% if info.username == username %}</b>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <hr />
+  {% unless removed == empty %}
+  Удалённые предметы из списка покупок:
+  <ul>
+    {% for item in removed %}
+    <li>{{ item | escape }}</li>
+    {% endfor %}
+  </ul>
+  <hr />
+  {% endunless %}
+  <a href="."><button>Добавить ещё чек</button></a>
+</body>
+
 </html>

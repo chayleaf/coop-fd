@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    ffi::CStr,
     io,
     path::PathBuf,
 };
@@ -10,8 +9,11 @@ use chrono::Utc;
 use dashmap::DashMap;
 use indexmap::IndexSet;
 use liquid_core::{Display_filter, Filter, FilterReflection, ParseFilter, Runtime, ValueView};
+use ofd::Ofd;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, OnceCell, RwLock};
+use tokio::sync::{OnceCell, RwLock};
+
+mod ofd;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct Company {
@@ -21,6 +23,8 @@ struct Company {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct Receipt {
+    #[serde(default, skip_serializing_if = "Ofd::is_platforma_ofd")]
+    ofd: Ofd,
     company: Company,
     items: Vec<Item>,
     total: u64,
@@ -45,6 +49,8 @@ impl Receipt {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct Item {
     name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    id: String,
     count: f64,
     unit: String,
     per_item: u64,
@@ -56,6 +62,7 @@ fn parse_qr(s: &str) -> Receipt {
     let mut ret = Receipt::default();
     for (k, v) in s.split('&').filter_map(|x| x.split_once('=')) {
         match k {
+            "ofd" => ret.ofd = v.parse().unwrap_or_default(),
             "t" => ret.date = v.to_owned(),
             "s" => ret.total = v.replace('.', "").parse::<u64>().unwrap_or_default(),
             "fn" => ret.r#fn = v.to_owned(),
@@ -66,274 +73,6 @@ fn parse_qr(s: &str) -> Receipt {
         }
     }
     ret
-}
-
-fn parse(data: &str, ret: &mut Receipt) -> Option<()> {
-    // TODO: parse older formats? just for fun
-    let data = data.split("fido_cheque_container\">").nth(1)?;
-    let data = data.split('<').next()?;
-    let data = data.trim();
-    if let Some(data) = data
-        .split("&lt;!-- Название --&gt;")
-        .nth(1)
-        .and_then(|x| x.split("&lt;!-- /Название --&gt;").next())
-    {
-        if let Some(x) = data
-            .split("&lt;b&gt;")
-            .nth(1)
-            .and_then(|x| x.split("&lt;/b&gt;").next())
-        {
-            ret.company.name = html_escape::decode_html_entities(x).into_owned();
-        }
-        if let Some(x) = data
-            .split("&gt;ИНН")
-            .nth(1)
-            .and_then(|x| x.split("&lt;").next())
-        {
-            ret.company.inn = x.trim().to_owned();
-        }
-    }
-    if let Some(data) = data
-        .split("&lt;!-- Предоплата --&gt;")
-        .nth(1)
-        .and_then(|x| x.split("&lt;!-- /Предоплата --&gt;").next())
-    {
-        // items
-        for data in data.split("&lt;!-- Fragment - field --&gt;") {
-            let mut item = Item::default();
-            if let Some(x) = data
-                .split("&lt;b&gt;")
-                .nth(1)
-                .and_then(|x| x.split("&lt;/b&gt;").next())
-                .and_then(|x| x.split_once(' '))
-                .map(|x| x.1)
-            {
-                item.name = html_escape::decode_html_entities(x).into_owned();
-            }
-            if let Some(data) = data
-                .split("&lt;!-- Цена --&gt;")
-                .nth(1)
-                .and_then(|x| x.split("&lt;b&gt;").nth(1))
-                .and_then(|x| x.split("&lt;/b&gt;").next())
-            {
-                if let Some(x) = data
-                    .split("&lt;span&gt;")
-                    .nth(1)
-                    .and_then(|x| x.split_whitespace().next())
-                    .and_then(|x| x.parse::<f64>().ok())
-                {
-                    item.count = x;
-                }
-                if let Some(x) = data
-                    .split('x')
-                    .next()
-                    .and_then(|x| x.split("&lt;/span&gt;").nth(1))
-                    .and_then(|x| x.split("&lt;span&gt;").last())
-                {
-                    if x != "&lt;!-- --&gt;" {
-                        item.unit = html_escape::decode_html_entities(x).into_owned();
-                    }
-                }
-                if let Some(x) = data
-                    .split('x')
-                    .nth(1)
-                    .and_then(|x| x.split("&lt;span&gt;").nth(1))
-                    .and_then(|x| x.split("&lt;/span&gt;").next())
-                    .and_then(|x| x.replace('.', "").parse::<u64>().ok())
-                {
-                    item.per_item = x;
-                }
-            }
-            if let Some(data) = data
-                .split("&lt;!-- Общая стоимость позиции --&gt;")
-                .nth(1)
-                .and_then(|x| x.split("&lt;!-- /Общая стоимость позиции --&gt;").next())
-            {
-                if let Some(x) = data
-                    .split("&lt;span")
-                    .nth(2)
-                    .and_then(|x| x.split("&quot;&gt;").nth(1))
-                    .and_then(|x| x.split("&lt;/span&gt;").next())
-                    .and_then(|x| x.replace('.', "").parse::<u64>().ok())
-                {
-                    item.total = x;
-                }
-            }
-            if let Some(data) = data
-                .split("&lt;!-- Сумма НДС за предмет расчета --&gt;")
-                .nth(1)
-                .and_then(|x| {
-                    x.split("&lt;!-- /Сумма НДС за предмет расчета --&gt;")
-                        .next()
-                })
-            {
-                if let Some(x) = data
-                    .split("&lt;span")
-                    .nth(2)
-                    .and_then(|x| x.split("&quot;&gt;").nth(1))
-                    .and_then(|x| x.split("&lt;/span&gt;").next())
-                    .and_then(|x| x.replace('.', "").parse::<u64>().ok())
-                {
-                    if item.total != x {
-                        item.tax = x;
-                    }
-                }
-            }
-            ret.items.push(item);
-        }
-        ret.items.pop();
-    }
-    if let Some(data) = data
-        .split("&lt;!-- ИТОГ --&gt;")
-        .nth(1)
-        .and_then(|x| x.split("&lt;!-- /ИТОГ --&gt;").next())
-    {
-        if let Some(x) = data
-            .split("&lt;span&gt;")
-            .nth(1)
-            .and_then(|x| x.split("&lt;/span&gt;").next())
-            .and_then(|x| x.replace('.', "").parse::<u64>().ok())
-        {
-            ret.total = x;
-        }
-    }
-    if let Some(data) = data
-        .split("&lt;!-- ИТОГ - Тело таблицы --&gt;")
-        .nth(1)
-        .and_then(|x| x.split("&lt;!-- /ИТОГ - Тело таблицы --&gt;").next())
-    {
-        let mut it = data
-            .split("block&quot;&gt;")
-            .skip(1)
-            .map(|x| x.split("&lt;/span&gt;").next());
-        while let Some(k) = it.next() {
-            let v = it.next();
-            let (Some(k), Some(Some(v))) = (k, v) else {
-                continue;
-            };
-            let Ok(v) = v.replace('.', "").parse::<u64>() else {
-                continue;
-            };
-            match k {
-                "НАЛИЧНЫМИ" => ret.total_cash = v,
-                "БЕЗНАЛИЧНЫМИ" => ret.total_card = v,
-                x if x.starts_with("СУММА НДС ЧЕКА ПО СТАВКЕ") => {
-                    ret.total_tax += v;
-                }
-                _ => {}
-            }
-        }
-    }
-    Some(())
-}
-
-async fn fetch(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
-    if let Some(fnifp) = rec.fnifp() {
-        let mut path = config.data_path.clone();
-        path.push("parsed");
-        path.push(fnifp + ".json");
-        if let Ok(data) = tokio::fs::read(path).await {
-            if let Ok(parsed) = serde_json::from_slice::<Receipt>(&data) {
-                *rec = parsed;
-                return Ok(true);
-            }
-        }
-    }
-    let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/118.0")
-        .cookie_store(true)
-        .build()?;
-    let url = format!(
-        "https://lk.platformaofd.ru/web/noauth/cheque/search?fn={}&fp={}&i={}",
-        rec.r#fn, rec.fp, rec.i
-    );
-    let req = client.get(&url).build()?;
-    let form_res = client.execute(req).await?;
-    let form = form_res.text().await?;
-    let mut succ = false;
-    if let Some(captcha) = form
-        .split("class=\"form-captcha-image\" src=\"")
-        .nth(1)
-        .and_then(|x| x.split('"').next())
-    {
-        let req = client
-            .get(format!("https://lk.platformaofd.ru{captcha}"))
-            .build()?;
-        let captcha_res = client.execute(req).await?;
-        let captcha_img = captcha_res.bytes().await?;
-        let mut api = leptess::tesseract::TessApi::new(None, "fin").unwrap();
-        api.raw
-            .set_variable(
-                leptess::Variable::TesseditCharWhitelist.as_cstr(),
-                CStr::from_bytes_with_nul(b"0123456789\0").unwrap(),
-            )
-            .unwrap();
-        if let Ok(pix) = leptess::leptonica::pix_read_mem(&captcha_img) {
-            api.set_image(&pix);
-        }
-        let captcha = api
-            .get_utf8_text()
-            .unwrap_or_default()
-            .as_str()
-            .chars()
-            .filter(char::is_ascii_digit)
-            .collect::<String>();
-        println!("captcha: {captcha}");
-        if let Some(csrf) = form
-            .split("type=\"hidden\" name=\"_csrf\" value=\"")
-            .nth(1)
-            .and_then(|x| x.split('"').next())
-        {
-            let req = client
-                .post("https://lk.platformaofd.ru/web/noauth/cheque/search")
-                .form(&{
-                    let mut form = HashMap::new();
-                    form.insert("fn", rec.r#fn.clone());
-                    form.insert("fp", rec.fp.clone());
-                    form.insert("i", rec.i.clone());
-                    form.insert("captcha", captcha);
-                    form.insert("_csrf", csrf.to_owned());
-                    form
-                })
-                .header("Referer", url)
-                .header("Origin", "https://lk.platformaofd.ru")
-                .build()?;
-            let res = client.execute(req).await?;
-            if res.url().path().ends_with("/id") {
-                rec.id = res
-                    .url()
-                    .query_pairs()
-                    .find_map(|(k, v)| (k == "id").then_some(v))
-                    .unwrap_or_default()
-                    .into_owned();
-                let text = res.text().await?;
-                let mut path = config.data_path.clone();
-                path.push("raw");
-                path.push(rec.id.clone() + ".html");
-                if let Err(err) = tokio::fs::write(path, &text).await {
-                    log::error!("failed to write raw receipt: {err:?}");
-                }
-                parse(&text, rec);
-                if let Some(fnifp) = rec.fnifp() {
-                    let mut path = config.data_path.clone();
-                    path.push("parsed");
-                    path.push(fnifp + ".json");
-                    match serde_json::to_vec(rec) {
-                        Ok(rec) => {
-                            if let Err(err) = tokio::fs::write(path, &rec).await {
-                                log::error!("failed to write receipt cache: {err:?}");
-                            }
-                        }
-                        Err(err) => {
-                            log::error!("failed to serialize receipt: {err:?}");
-                        }
-                    }
-                }
-                succ = true;
-            }
-        }
-    }
-    Ok(succ)
 }
 
 mod iso8601 {
@@ -555,6 +294,19 @@ async fn save_list(config: &Config, list: &[ListItem]) -> io::Result<()> {
     tokio::fs::rename(path1, path2).await
 }
 
+fn digits(s: &str) -> String {
+    let has_dot = s.contains('.');
+    let mut ret = s
+        .bytes()
+        .filter(|x| x.is_ascii_digit())
+        .map(|x| x as char)
+        .collect();
+    if !has_dot {
+        ret += "00";
+    }
+    ret
+}
+
 #[tokio::main]
 async fn main() {
     let config_path = std::env::vars_os()
@@ -571,14 +323,16 @@ async fn main() {
         ret
     };
 
-    let (a, b, c) = tokio::join!(
-        tokio::fs::create_dir_all(data_path("raw")),
+    let (a, b, c, d) = tokio::join!(
+        tokio::fs::create_dir_all(data_path("raw/platforma-ofd")),
+        tokio::fs::create_dir_all(data_path("raw/magnit")),
         tokio::fs::create_dir_all(data_path("parsed")),
         tokio::fs::create_dir_all(data_path("transactions")),
     );
-    a.expect("failed to create data/raw");
-    b.expect("failed to create data/parsed");
-    c.expect("failed to create data/transactions");
+    a.expect("failed to create data/raw/platforma-ofd");
+    b.expect("failed to create data/raw/magnit");
+    c.expect("failed to create data/parsed");
+    d.expect("failed to create data/transactions");
 
     // static
     let style = &*Box::leak(Box::new(
@@ -747,6 +501,10 @@ async fn main() {
                     axum::response::Html::from(root_t.render(&liquid::object!({
                         "extra_qr_processing": format!("if({})return;", config.ignore_qr_condition),
                         "usernames": &config.usernames,
+                        "ofds": Ofd::ALL.iter().map(|x| liquid::object!({
+                            "id": x.id(),
+                            "name": x.name(),
+                        })).collect::<Vec<_>>(),
                     })).unwrap_or_else(|err| format!("Error: {err}")))
                 }
             }),
@@ -877,13 +635,10 @@ async fn main() {
                                                         tr.pay(
                                                             user,
                                                             to,
-                                                            amt
-                                                                / i64::try_from(
-                                                                    config.usernames.len(),
-                                                                )
-                                                                .expect(
-                                                                    "usize->i64 conversion failed",
-                                                                ),
+                                                            amt / i64::try_from(
+                                                                config.usernames.len(),
+                                                            )
+                                                            .expect("usize->i64 conversion failed"),
                                                         );
                                                     }
                                                 }
@@ -912,11 +667,11 @@ async fn main() {
         .route(
             "/list",
             axum::routing::get(|| {
-                let units = copy_ref(commodities);
+                let commodities = copy_ref(commodities);
                 let list_t = copy_ref(list_t);
                 let list = copy_ref(list);
                 async move {
-                    let items = units
+                    let items = commodities
                         .iter()
                         .map(|item| {
                             let val = item.value();
@@ -936,7 +691,11 @@ async fn main() {
                                     liquid::object!({
                                         "name": x.name,
                                         "amount": x.amount,
-                                        "unit": units.get(&x.name).map(|x| format!(" {}", x.value().unit)).unwrap_or_default()
+                                        "unit": commodities
+                                            .get(&x.name)
+                                            .filter(|x| !x.value().unit.is_empty())
+                                            .map(|x| format!(" {}", x.value().unit))
+                                            .unwrap_or_default()
                                     })
                                 }).collect::<Vec<_>>(),
                             }))
@@ -970,7 +729,9 @@ async fn main() {
                     let list = copy_ref(list);
                     async move {
                         if let Some(name) = f.get("name") {
-                            if let Some(amount) = f.get("amount").and_then(|x| x.parse::<f64>().ok()) {
+                            if let Some(amount) =
+                                f.get("amount").and_then(|x| x.parse::<f64>().ok())
+                            {
                                 let mut list = list.write().await;
                                 let mut added = false;
                                 for item in &mut *list {
@@ -980,7 +741,10 @@ async fn main() {
                                     }
                                 }
                                 if !added {
-                                    list.push(ListItem { name: name.clone(), amount });
+                                    list.push(ListItem {
+                                        name: name.clone(),
+                                        amount,
+                                    });
                                 }
                                 let _ = save_list(config, &list).await;
                             }
@@ -1102,7 +866,9 @@ async fn main() {
                             let mut val = units.entry(item.name.clone()).or_default();
                             let val = val.value_mut();
                             val.unit = item.unit.clone();
-                            if let Ok(date) = chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M") {
+                            if let Ok(date) =
+                                chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M")
+                            {
                                 val.last_time = date;
                             }
                             val.count += 1;
@@ -1151,12 +917,20 @@ async fn main() {
                     let add_t = copy_ref(add_t);
                     async move {
                         axum::response::Html::from(if let Some(q) = q {
-                            if let Some(username) = cookies.get("username").map(axum_extra::extract::cookie::Cookie::value) {
+                            if let Some(username) = cookies
+                                .get("username")
+                                .map(axum_extra::extract::cookie::Cookie::value)
+                            {
                                 let mut rec = parse_qr(&q);
                                 if rec.r#fn.is_empty()
                                     || rec.fp.is_empty()
                                     || rec.i.is_empty() && q.starts_with("http")
                                 {
+                                    let q = if q.starts_with("ofd=") {
+                                        q.split_once('&').map(|x| x.1).unwrap_or(&q)
+                                    } else {
+                                        &q
+                                    };
                                     if let Ok(res) = reqwest::get(q).await {
                                         if let Ok(text) = res.text().await {
                                             if let Some(x) = text
@@ -1205,26 +979,7 @@ async fn main() {
                                     }
                                 }
                                 if let Some(fnifp) = rec.fnifp() {
-                                    let (tx, mut rx) = mpsc::channel(1);
-                                    for _ in 0..8 {
-                                        let mut rec = rec.clone();
-                                        let tx = tx.clone();
-                                        let config = copy_ref(config);
-                                        tokio::spawn(async move {
-                                            for _ in 0..8 {
-                                                if matches!(fetch(config, &mut rec).await, Ok(true)) {
-                                                    let _ = tx.try_send(rec);
-                                                    break;
-                                                }
-                                                if tx.is_closed() {
-                                                    break;
-                                                }
-                                            }
-                                        });
-                                    }
-                                    drop(tx);
-                                    if let Some(rec) = rx.recv().await {
-                                        drop(rx);
+                                    if let Some(rec) = ofd::fetch(config, rec).await {
                                         add_t.render(&liquid::object!({
                                             "total": rec.total,
                                             "username": username,
