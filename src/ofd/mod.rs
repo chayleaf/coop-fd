@@ -48,8 +48,7 @@ impl FromStr for Ofd {
 
 pub(crate) async fn fetch(config: &'static Config, rec: Receipt) -> Option<Receipt> {
     if let Some(fnifp) = rec.fnifp() {
-        let mut path = config.data_path.clone();
-        path.push("parsed");
+        let mut path = config.data_path("parsed");
         path.push(fnifp + ".json");
         if let Ok(data) = tokio::fs::read(path).await {
             if let Ok(parsed) = serde_json::from_slice::<Receipt>(&data) {
@@ -63,8 +62,7 @@ pub(crate) async fn fetch(config: &'static Config, rec: Receipt) -> Option<Recei
     };
 
     if let Some(fnifp) = rec.fnifp() {
-        let mut path = config.data_path.clone();
-        path.push("parsed");
+        let mut path = config.data_path("parsed");
         path.push(fnifp + ".json");
         match serde_json::to_vec(&rec) {
             Ok(rec) => {

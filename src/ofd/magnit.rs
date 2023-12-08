@@ -306,9 +306,7 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
         .await?
         .text()
         .await?;
-    let mut path = config.data_path.clone();
-    path.push("raw");
-    path.push("magnit");
+    let mut path = config.data_path("raw/magnit");
     path.push(rec.fnifp().unwrap_or_default() + ".html");
     if let Err(err) = tokio::fs::write(path, &res).await {
         log::error!("failed to write raw receipt: {err:?}");

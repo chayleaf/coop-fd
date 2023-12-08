@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use axum::response::IntoResponse;
@@ -183,8 +183,7 @@ async fn add_transaction(config: &Config, mut tr: Transaction) -> HashMap<String
     }
     tr.date = chrono::Utc::now();
     tr.prev_state = Some(lock.clone());
-    let mut path = config.data_path.clone();
-    path.push("transactions");
+    let mut path = config.data_path("transactions");
     path.push(
         tr.date.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
             + "_"
@@ -209,6 +208,14 @@ struct Config {
     listener: String,
     data_path: PathBuf,
     ignore_qr_condition: String,
+}
+
+impl Config {
+    pub fn data_path(&self, path: impl AsRef<Path>) -> PathBuf {
+        let mut ret = self.data_path.clone();
+        ret.push(path.as_ref());
+        ret
+    }
 }
 
 const fn copy_ref<T: ?Sized>(t: &T) -> &T {
@@ -282,10 +289,8 @@ struct Commodity {
 }
 
 async fn save_list(config: &Config, list: &[ListItem]) -> io::Result<()> {
-    let mut path1 = config.data_path.clone();
-    let mut path2 = config.data_path.clone();
-    path1.push("list.json.tmp");
-    path2.push("list.json");
+    let path1 = config.data_path("list.json.tmp");
+    let path2 = config.data_path("list.json");
     tokio::fs::write(
         &path1,
         serde_json::to_string(list).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?,
@@ -310,187 +315,247 @@ fn digits(s: &str) -> String {
 #[tokio::main]
 async fn main() {
     env_logger::init();
+
     let config_path = std::env::vars_os()
         .find(|(k, _)| k == "CONFIG_FILE")
         .map_or_else(|| "config.json".into(), |(_, v)| v);
-    let config = tokio::fs::read(config_path)
-        .await
-        .expect("failed to read config.json");
-    let config = serde_json::from_slice::<Config>(&config).expect("invalid config.json");
-    let config = Box::leak(Box::new(config));
-    let data_path = |x| {
-        let mut ret = config.data_path.clone();
-        ret.push(x);
-        ret
-    };
-
-    let (a, b, c, d) = tokio::join!(
-        tokio::fs::create_dir_all(data_path("raw/platforma-ofd")),
-        tokio::fs::create_dir_all(data_path("raw/magnit")),
-        tokio::fs::create_dir_all(data_path("parsed")),
-        tokio::fs::create_dir_all(data_path("transactions")),
-    );
-    a.expect("failed to create data/raw/platforma-ofd");
-    b.expect("failed to create data/raw/magnit");
-    c.expect("failed to create data/parsed");
-    d.expect("failed to create data/transactions");
-
-    // static
-    let style = &*Box::leak(Box::new(
-        tokio::fs::read_to_string("static/style.css")
-            .await
-            .unwrap_or_else(|_| include_str!("../static/style.css").to_owned()),
-    ));
-    let fzf = &*Box::leak(Box::new(
-        tokio::fs::read_to_string("static/fzf.js")
-            .await
-            .unwrap_or_else(|_| include_str!("../static/fzf.js").to_owned()),
-    ));
-    let qr_scanner_worker = &*Box::leak(Box::new(
-        tokio::fs::read_to_string("static/qr-scanner-worker.min.js")
-            .await
-            .unwrap_or_else(|_| include_str!("../static/qr-scanner-worker.min.js").to_owned()),
-    ));
-    let qr_scanner_worker_map = &*Box::leak(Box::new(
-        tokio::fs::read_to_string("static/qr-scanner-worker.min.js.map")
-            .await
-            .unwrap_or_else(|_| include_str!("../static/qr-scanner-worker.min.js.map").to_owned()),
-    ));
-    let qr_scanner_umd = &*Box::leak(Box::new(
-        tokio::fs::read_to_string("static/qr-scanner.umd.min.js")
-            .await
-            .unwrap_or_else(|_| include_str!("../static/qr-scanner.umd.min.js").to_owned()),
-    ));
-    let qr_scanner_umd_map = &*Box::leak(Box::new(
-        tokio::fs::read_to_string("static/qr-scanner.umd.min.js.map")
-            .await
-            .unwrap_or_else(|_| include_str!("../static/qr-scanner.umd.min.js.map").to_owned()),
+    let config = Box::leak(Box::new(
+        serde_json::from_slice::<Config>(
+            &tokio::fs::read(config_path)
+                .await
+                .expect("failed to read config.json"),
+        )
+        .expect("invalid config.json"),
     ));
 
-    // templates
     let parser = liquid::ParserBuilder::with_stdlib()
         .filter(CurrencyFilter)
         .filter(CEscapeFilter)
         .build()
         .unwrap();
-    let root_t = &*Box::leak(Box::new(
-        parser
-            .parse(
-                &tokio::fs::read_to_string("templates/index.html")
-                    .await
-                    .unwrap_or_else(|_| include_str!("../templates/index.html").to_owned()),
-            )
-            .unwrap_or_else(|err| panic!("index:\n{err}")),
-    ));
-    let submitted_t = &*Box::leak(Box::new(
-        parser
-            .parse(
-                &tokio::fs::read_to_string("templates/submitted.html")
-                    .await
-                    .unwrap_or_else(|_| include_str!("../templates/submitted.html").to_owned()),
-            )
-            .unwrap_or_else(|err| panic!("submitted:\n{err}")),
-    ));
-    let add_t = &*Box::leak(Box::new(
-        parser
-            .parse(
-                &tokio::fs::read_to_string("templates/add.html")
-                    .await
-                    .unwrap_or_else(|_| include_str!("../templates/add.html").to_owned()),
-            )
-            .unwrap_or_else(|err| panic!("add:\n{err}")),
-    ));
-    let list_t = &*Box::leak(Box::new(
-        parser
-            .parse(
-                &tokio::fs::read_to_string("templates/list.html")
-                    .await
-                    .unwrap_or_else(|_| include_str!("../templates/list.html").to_owned()),
-            )
-            .unwrap_or_else(|err| panic!("list:\n{err}")),
-    ));
-
-    let list: &RwLock<Vec<ListItem>> = &*Box::leak(Box::new(RwLock::new(
-        serde_json::from_str(
-            &tokio::fs::read_to_string(data_path("list.json"))
-                .await
-                .unwrap_or_else(|_| "[]".to_owned()),
-        )
-        .unwrap(),
-    )));
-
-    let mut balance = HashMap::<String, i64>::new();
-    let paid_receipts = Box::leak(Box::new(dashmap::DashSet::<String>::new()));
-    let mut dir = tokio::fs::read_dir(data_path("transactions"))
-        .await
-        .expect("failed to read transaction list");
-    while let Some(file) = dir
-        .next_entry()
-        .await
-        .expect("failed to read transaction list entry")
-    {
-        if !matches!(file.path().extension().and_then(|x| x.to_str()).map(str::to_lowercase), Some(x) if x.as_str() == "json")
-        {
-            continue;
-        }
-        let data = tokio::fs::read(file.path())
-            .await
-            .expect("failed to read transaction");
-        let tr = serde_json::from_slice::<Transaction>(&data).unwrap_or_else(|_| {
-            panic!(
-                "failed to deserialize transaction {}",
-                file.path().display()
-            )
-        });
-        if let Some(TransactionMeta::Receipt {
-            r#fn,
-            i,
-            fp,
-            paid: _,
-        }) = tr.meta
-        {
-            paid_receipts.insert(format!("{fn}_{i}_{fp}"));
-        }
-        for (k, v) in &tr.balance_changes {
-            let x = balance.entry(k.clone()).or_default();
-            *x = x.checked_add(*v).expect("balance overflowed");
-        }
-    }
-    balance.retain(|_, v| *v != 0);
-    BALANCE.set(balance.into()).unwrap();
 
     let commodities = &*Box::leak(Box::new(DashMap::<String, Commodity>::new()));
-    let mut dir = tokio::fs::read_dir(data_path("parsed"))
-        .await
-        .expect("failed to read receipt list");
-    while let Some(file) = dir
-        .next_entry()
-        .await
-        .expect("failed to read receipt list entry")
-    {
-        if !matches!(file.path().extension().and_then(|x| x.to_str()).map(str::to_lowercase), Some(x) if x.as_str() == "json")
-        {
-            continue;
-        }
-        let data = tokio::fs::read(file.path())
-            .await
-            .expect("failed to read transaction");
-        let rec = serde_json::from_slice::<Receipt>(&data).unwrap_or_else(|err| {
-            panic!(
-                "failed to deserialize receipt {}: {err}",
-                file.path().display()
-            )
-        });
-        for item in rec.items {
-            let mut val = commodities.entry(item.name).or_default();
-            let val = val.value_mut();
-            val.unit = item.unit;
-            if let Ok(date) = chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M") {
-                val.last_time = date;
+    let paid_receipts = Box::leak(Box::new(dashmap::DashSet::<String>::new()));
+
+    tokio::join!(
+        async {
+            tokio::fs::create_dir_all(config.data_path("parsed"))
+                .await
+                .unwrap();
+        },
+        async {
+            tokio::fs::create_dir_all(config.data_path("transactions"))
+                .await
+                .unwrap();
+        },
+    );
+
+    let (
+        style,
+        fzf,
+        qr_scanner_worker,
+        qr_scanner_worker_map,
+        qr_scanner_umd,
+        qr_scanner_umd_map,
+        root_t,
+        submitted_t,
+        add_t,
+        list_t,
+        list,
+        ..,
+    ) = tokio::join!(
+        async {
+            &*Box::leak(Box::new(
+                tokio::fs::read_to_string("static/style.css")
+                    .await
+                    .unwrap_or_else(|_| include_str!("../static/style.css").to_owned()),
+            ))
+        },
+        async {
+            &*Box::leak(Box::new(
+                tokio::fs::read_to_string("static/fzf.js")
+                    .await
+                    .unwrap_or_else(|_| include_str!("../static/fzf.js").to_owned()),
+            ))
+        },
+        async {
+            &*Box::leak(Box::new(
+                tokio::fs::read_to_string("static/qr-scanner-worker.min.js")
+                    .await
+                    .unwrap_or_else(|_| {
+                        include_str!("../static/qr-scanner-worker.min.js").to_owned()
+                    }),
+            ))
+        },
+        async {
+            &*Box::leak(Box::new(
+                tokio::fs::read_to_string("static/qr-scanner-worker.min.js.map")
+                    .await
+                    .unwrap_or_else(|_| {
+                        include_str!("../static/qr-scanner-worker.min.js.map").to_owned()
+                    }),
+            ))
+        },
+        async {
+            &*Box::leak(Box::new(
+                tokio::fs::read_to_string("static/qr-scanner.umd.min.js")
+                    .await
+                    .unwrap_or_else(|_| include_str!("../static/qr-scanner.umd.min.js").to_owned()),
+            ))
+        },
+        async {
+            &*Box::leak(Box::new(
+                tokio::fs::read_to_string("static/qr-scanner.umd.min.js.map")
+                    .await
+                    .unwrap_or_else(|_| {
+                        include_str!("../static/qr-scanner.umd.min.js.map").to_owned()
+                    }),
+            ))
+        },
+        async {
+            &*Box::leak(Box::new(
+                parser
+                    .parse(
+                        &tokio::fs::read_to_string("templates/index.html")
+                            .await
+                            .unwrap_or_else(|_| include_str!("../templates/index.html").to_owned()),
+                    )
+                    .unwrap_or_else(|err| panic!("index:\n{err}")),
+            ))
+        },
+        async {
+            &*Box::leak(Box::new(
+                parser
+                    .parse(
+                        &tokio::fs::read_to_string("templates/submitted.html")
+                            .await
+                            .unwrap_or_else(|_| {
+                                include_str!("../templates/submitted.html").to_owned()
+                            }),
+                    )
+                    .unwrap_or_else(|err| panic!("submitted:\n{err}")),
+            ))
+        },
+        async {
+            &*Box::leak(Box::new(
+                parser
+                    .parse(
+                        &tokio::fs::read_to_string("templates/add.html")
+                            .await
+                            .unwrap_or_else(|_| include_str!("../templates/add.html").to_owned()),
+                    )
+                    .unwrap_or_else(|err| panic!("add:\n{err}")),
+            ))
+        },
+        async {
+            &*Box::leak(Box::new(
+                parser
+                    .parse(
+                        &tokio::fs::read_to_string("templates/list.html")
+                            .await
+                            .unwrap_or_else(|_| include_str!("../templates/list.html").to_owned()),
+                    )
+                    .unwrap_or_else(|err| panic!("list:\n{err}")),
+            ))
+        },
+        async {
+            &*Box::leak(Box::new(RwLock::new(
+                serde_json::from_str::<Vec<ListItem>>(
+                    &tokio::fs::read_to_string(config.data_path("list.json"))
+                        .await
+                        .unwrap_or_else(|_| "[]".to_owned()),
+                )
+                .unwrap(),
+            )))
+        },
+        async {
+            // fill balance and paid receipt list (can be parallelized)
+            let mut balance = HashMap::<String, i64>::new();
+            let mut dir = tokio::fs::read_dir(config.data_path("transactions"))
+                .await
+                .expect("failed to read transaction list");
+            while let Some(file) = dir
+                .next_entry()
+                .await
+                .expect("failed to read transaction list entry")
+            {
+                if !matches!(file.path().extension().and_then(|x| x.to_str()).map(str::to_lowercase), Some(x) if x.as_str() == "json")
+                {
+                    continue;
+                }
+                let data = tokio::fs::read(file.path())
+                    .await
+                    .expect("failed to read transaction");
+                let tr = serde_json::from_slice::<Transaction>(&data).unwrap_or_else(|_| {
+                    panic!(
+                        "failed to deserialize transaction {}",
+                        file.path().display()
+                    )
+                });
+                if let Some(TransactionMeta::Receipt {
+                    r#fn,
+                    i,
+                    fp,
+                    paid: _,
+                }) = tr.meta
+                {
+                    paid_receipts.insert(format!("{fn}_{i}_{fp}"));
+                }
+                for (k, v) in &tr.balance_changes {
+                    let x = balance.entry(k.clone()).or_default();
+                    *x = x.checked_add(*v).expect("balance overflowed");
+                }
             }
-            val.count += 1;
-        }
-    }
+            balance.retain(|_, v| *v != 0);
+            BALANCE.set(balance.into()).unwrap();
+        },
+        async {
+            // fill commodities (can be parallelized)
+            let mut dir = tokio::fs::read_dir(config.data_path("parsed"))
+                .await
+                .expect("failed to read receipt list");
+            while let Some(file) = dir
+                .next_entry()
+                .await
+                .expect("failed to read receipt list entry")
+            {
+                if !matches!(file.path().extension().and_then(|x| x.to_str()).map(str::to_lowercase), Some(x) if x.as_str() == "json")
+                {
+                    continue;
+                }
+                let data = tokio::fs::read(file.path())
+                    .await
+                    .expect("failed to read transaction");
+                let rec = serde_json::from_slice::<Receipt>(&data).unwrap_or_else(|err| {
+                    panic!(
+                        "failed to deserialize receipt {}: {err}",
+                        file.path().display()
+                    )
+                });
+                for item in rec.items {
+                    let mut val = commodities.entry(item.name).or_default();
+                    let val = val.value_mut();
+                    val.unit = item.unit;
+                    if let Ok(date) =
+                        chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M")
+                    {
+                        val.last_time = date;
+                    }
+                    val.count += 1;
+                }
+            }
+        },
+        async {
+            tokio::fs::create_dir_all(config.data_path("raw/platforma-ofd"))
+                .await
+                .unwrap();
+        },
+        async {
+            tokio::fs::create_dir_all(config.data_path("raw/magnit"))
+                .await
+                .unwrap();
+        },
+    );
 
     let app = axum::Router::new()
         .route(
@@ -777,8 +842,7 @@ async fn main() {
                         let Some(username) = f.get("username") else {
                             return axum::response::Html::from("missing username".to_owned());
                         };
-                        let mut path = config.data_path.clone();
-                        path.push("parsed");
+                        let mut path = config.data_path("parsed");
                         path.push(format!("{fn}_{i}_{fp}.json").replace(['/', '\\'], ""));
                         let Ok(data) = tokio::fs::read(path).await else {
                             return axum::response::Html::from("missing recept cache".to_owned());

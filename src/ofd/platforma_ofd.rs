@@ -231,17 +231,14 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
                     .unwrap_or_default()
                     .into_owned();
                 let text = res.text().await?;
-                let mut path = config.data_path.clone();
-                path.push("raw");
-                path.push("platforma-ofd");
+                let mut path = config.data_path("raw/platforma-ofd");
                 path.push(rec.id.clone() + ".html");
                 if let Err(err) = tokio::fs::write(path, &text).await {
                     log::error!("failed to write raw receipt: {err:?}");
                 }
                 parse(&text, rec);
                 if let Some(fnifp) = rec.fnifp() {
-                    let mut path = config.data_path.clone();
-                    path.push("parsed");
+                    let mut path = config.data_path("parsed");
                     path.push(fnifp + ".json");
                     match serde_json::to_vec(rec) {
                         Ok(rec) => {
