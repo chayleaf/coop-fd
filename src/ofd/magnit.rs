@@ -93,7 +93,7 @@ impl ZulNode {
         } else {
             fmt.write_str(" {\n")?;
             for child in &self.children {
-                for _ in 0..ident + 1 {
+                for _ in 0..=ident {
                     fmt.write_str("  ")?;
                 }
                 child.pretty(fmt, ident + 1)?;
@@ -106,7 +106,7 @@ impl ZulNode {
         }
     }
 
-    fn get_elements_by_tag_name(&self, name: &str) -> Vec<&ZulNode> {
+    fn get_elements_by_tag_name(&self, name: &str) -> Vec<&Self> {
         let mut ret = vec![];
         if self.tag.as_deref() == Some(name) {
             ret.push(self);
@@ -116,7 +116,7 @@ impl ZulNode {
             match attr {
                 ZulValue::Nodes(x) => {
                     for x in x {
-                        ret.extend_from_slice(&x.get_elements_by_tag_name(name))
+                        ret.extend_from_slice(&x.get_elements_by_tag_name(name));
                     }
                 }
                 _ => {}
@@ -128,7 +128,7 @@ impl ZulNode {
         ret
     }
 
-    fn get_element_by_id(&self, id: &str) -> Option<&ZulNode> {
+    fn get_element_by_id(&self, id: &str) -> Option<&Self> {
         if let Some(ZulValue::String(id2)) = self.attrs.get("id") {
             if id == id2 {
                 return Some(self);
@@ -186,7 +186,7 @@ fn into_val(expr: Expr) -> ZulValue {
     }
 }
 
-fn parse_obj(expr: ObjectExpr) -> HashMap<String, ZulValue> {
+fn parse_obj(expr: &ObjectExpr) -> HashMap<String, ZulValue> {
     let mut ret = HashMap::new();
     for prop in expr.props() {
         #[allow(clippy::single_match)]
@@ -242,11 +242,11 @@ fn visit_expr(expr: &Expr) -> Vec<ZulNode> {
             let Some(ExprOrSpread::Expr(Expr::ObjectExpr(attrs))) = arr.next() else {
                 return vec![];
             };
-            let attrs = parse_obj(attrs);
+            let attrs = parse_obj(&attrs);
             let Some(ExprOrSpread::Expr(Expr::ObjectExpr(idk))) = arr.next() else {
                 return vec![];
             };
-            let idk = parse_obj(idk);
+            let idk = parse_obj(&idk);
             let Some(ExprOrSpread::Expr(Expr::ArrayExpr(ch))) = arr.next() else {
                 return vec![];
             };
@@ -264,20 +264,13 @@ fn visit_expr(expr: &Expr) -> Vec<ZulNode> {
                 children,
             }]
         }
-        Expr::CallExpr(expr) => {
-            if let Some(arg) = expr.arguments().and_then(|args| args.args().next()) {
-                visit_expr(&arg)
-            } else {
-                vec![]
-            }
-        }
-        Expr::FnExpr(expr) => {
-            if let Some(stmt) = expr.body() {
-                visit_stmt(&Stmt::BlockStmt(stmt))
-            } else {
-                vec![]
-            }
-        }
+        Expr::CallExpr(expr) => expr
+            .arguments()
+            .and_then(|args| args.args().next())
+            .map_or_else(Vec::new, |arg| visit_expr(&arg)),
+        Expr::FnExpr(expr) => expr
+            .body()
+            .map_or_else(Vec::new, |stmt| visit_stmt(&Stmt::BlockStmt(stmt))),
         _ => vec![],
     }
 }
@@ -290,7 +283,6 @@ fn visit_stmt(stmt: &Stmt) -> Vec<ZulNode> {
                 ret.extend_from_slice(&visit_stmt(&stmt));
             }
         }
-        Stmt::EmptyStmt(_) => {}
         Stmt::ExprStmt(stmt) => {
             if let Some(expr) = stmt.expr() {
                 ret.extend_from_slice(&visit_expr(&expr));
@@ -347,17 +339,12 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
                                 }
                             })
                             .peekable();
-                        let mut since_inn = -1i32;
                         while let Some(label) = labels.next() {
                             if matches!(labels.peek(), Some(x) if x.starts_with("ИНН ")) {
                                 rec.company.name = label;
                             } else if label.starts_with("ИНН ") {
-                                since_inn = 0;
                                 rec.company.inn =
                                     label.split_whitespace().last().unwrap().to_owned();
-                            }
-                            if since_inn >= 0 {
-                                since_inn += 1;
                             }
                         }
                     }
@@ -365,7 +352,7 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
                         let items = items
                             .get_elements_by_tag_name("zul.grid.Row")
                             .into_iter()
-                            // skip header
+                            // skip table header
                             .skip(1)
                             .map(|x| {
                                 x.get_elements_by_tag_name("zul.wgt.Label")
@@ -391,18 +378,18 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
                                 let Some(name) = info.next() else {
                                     continue;
                                 };
+                                item.name = name;
                                 let Some(count) = info.next() else {
                                     continue;
                                 };
+                                item.count = count.parse().unwrap_or_default();
                                 let Some(per_item) = info.next() else {
                                     continue;
                                 };
+                                item.per_item = digits(&per_item).parse().unwrap_or_default();
                                 let Some(total) = info.next() else {
                                     continue;
                                 };
-                                item.name = name;
-                                item.count = count.parse().unwrap_or_default();
-                                item.per_item = digits(&per_item).parse().unwrap_or_default();
                                 item.total = digits(&total).parse().unwrap_or_default();
                             } else if let Some(item) = item.as_mut() {
                                 let mut info = info.into_iter();
@@ -414,38 +401,26 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
                                     .and_then(|key| key.strip_prefix("НДС "))
                                     .and_then(|x| x.parse::<u64>().ok())
                                 {
-                                    // tax percentage 10% means 1/11 is tax
-                                    // tax percentage 20% means 1/6 is tax
+                                    // "total" is already tax added
                                     let total_percentage = 100 + tax_percentage;
-                                    item.tax = f64::ceil(
-                                        (item.total * tax_percentage) as f64
-                                            / total_percentage as f64,
-                                    ) as u64;
+                                    item.tax = (item.total * tax_percentage + total_percentage - 1)
+                                        / total_percentage;
                                     continue;
                                 }
                                 let Some(val) = info.next() else {
                                     log::warn!("warning: magnit: no val for item key {key}");
                                     continue;
                                 };
-                                if let Some(tax_percentage) = key
-                                    .strip_suffix('%')
-                                    .and_then(|key| key.strip_prefix("НДС "))
-                                    .and_then(|x| x.parse::<u64>().ok())
-                                {
-                                    println!("tax {}", tax_percentage);
-                                    item.tax = item.total * tax_percentage / 100;
-                                } else {
-                                    match key.as_str() {
-                                        "РЕЗ. ПРОВ. СВЕД. О ТОВАРЕ" => {}
-                                        "ПРИЗНАК ПР. РАСЧЕТА" => {}
-                                        "СПОСОБ РАСЧЕТА" => {}
-                                        "МЕРА КОЛИЧЕСТВА ПР. РАСЧЕТА" => {
-                                            item.unit = val
-                                        }
-                                        "КОД ТОВАРА" => item.id = val,
-                                        key => {
-                                            log::warn!("warning: unknown magnit item key: {key}")
-                                        }
+                                match key.as_str() {
+                                    "РЕЗ. ПРОВ. СВЕД. О ТОВАРЕ"
+                                    | "ПРИЗНАК ПР. РАСЧЕТА"
+                                    | "СПОСОБ РАСЧЕТА" => {}
+                                    "МЕРА КОЛИЧЕСТВА ПР. РАСЧЕТА" => {
+                                        item.unit = val;
+                                    }
+                                    "КОД ТОВАРА" => item.id = val,
+                                    key => {
+                                        log::warn!("warning: unknown magnit item key: {key}");
                                     }
                                 }
                             }
@@ -473,13 +448,13 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
                             };
                             match key.as_str() {
                                 "Итого:" => {
-                                    rec.total = digits(&val).parse().unwrap_or_default()
+                                    rec.total = digits(&val).parse().unwrap_or_default();
                                 }
                                 "Наличными:" => {
-                                    rec.total_cash = digits(&val).parse().unwrap_or_default()
+                                    rec.total_cash = digits(&val).parse().unwrap_or_default();
                                 }
                                 "Безналичными:" => {
-                                    rec.total_card = digits(&val).parse().unwrap_or_default()
+                                    rec.total_card = digits(&val).parse().unwrap_or_default();
                                 }
                                 x if x.starts_with("НДС ") => {
                                     if let Ok(val) = digits(&val).parse::<u64>() {

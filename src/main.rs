@@ -298,7 +298,7 @@ fn digits(s: &str) -> String {
     let has_dot = s.contains('.');
     let mut ret = s
         .bytes()
-        .filter(|x| x.is_ascii_digit())
+        .filter(u8::is_ascii_digit)
         .map(|x| x as char)
         .collect();
     if !has_dot {
@@ -309,6 +309,7 @@ fn digits(s: &str) -> String {
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
     let config_path = std::env::vars_os()
         .find(|(k, _)| k == "CONFIG_FILE")
         .map_or_else(|| "config.json".into(), |(_, v)| v);
@@ -379,7 +380,7 @@ async fn main() {
                     .await
                     .unwrap_or_else(|_| include_str!("../templates/index.html").to_owned()),
             )
-            .unwrap_or_else(|err| panic!("index:\n{}", err)),
+            .unwrap_or_else(|err| panic!("index:\n{err}")),
     ));
     let submitted_t = &*Box::leak(Box::new(
         parser
@@ -388,7 +389,7 @@ async fn main() {
                     .await
                     .unwrap_or_else(|_| include_str!("../templates/submitted.html").to_owned()),
             )
-            .unwrap_or_else(|err| panic!("submitted:\n{}", err)),
+            .unwrap_or_else(|err| panic!("submitted:\n{err}")),
     ));
     let add_t = &*Box::leak(Box::new(
         parser
@@ -397,7 +398,7 @@ async fn main() {
                     .await
                     .unwrap_or_else(|_| include_str!("../templates/add.html").to_owned()),
             )
-            .unwrap_or_else(|err| panic!("add:\n{}", err)),
+            .unwrap_or_else(|err| panic!("add:\n{err}")),
     ));
     let list_t = &*Box::leak(Box::new(
         parser
@@ -406,7 +407,7 @@ async fn main() {
                     .await
                     .unwrap_or_else(|_| include_str!("../templates/list.html").to_owned()),
             )
-            .unwrap_or_else(|err| panic!("list:\n{}", err)),
+            .unwrap_or_else(|err| panic!("list:\n{err}")),
     ));
 
     let list: &RwLock<Vec<ListItem>> = &*Box::leak(Box::new(RwLock::new(
@@ -927,7 +928,7 @@ async fn main() {
                                     || rec.i.is_empty() && q.starts_with("http")
                                 {
                                     let q = if q.starts_with("ofd=") {
-                                        q.split_once('&').map(|x| x.1).unwrap_or(&q)
+                                        q.split_once('&').map_or(q.as_str(), |x| x.1)
                                     } else {
                                         &q
                                     };

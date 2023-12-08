@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ffi::CStr};
 
-use crate::{copy_ref, Receipt, Config, Item, digits};
+use crate::{copy_ref, digits, Config, Item, Receipt};
 use tokio::sync::mpsc;
 
 fn parse(data: &str, ret: &mut Receipt) -> Option<()> {
@@ -202,7 +202,7 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
             .chars()
             .filter(char::is_ascii_digit)
             .collect::<String>();
-        println!("captcha: {captcha}");
+        log::info!("captcha: {captcha}");
         if let Some(csrf) = form
             .split("type=\"hidden\" name=\"_csrf\" value=\"")
             .nth(1)

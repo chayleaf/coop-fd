@@ -17,17 +17,17 @@ pub enum Ofd {
 
 impl Ofd {
     // PlatformaOfd must go first since it's the default in the web UI
-    pub const ALL: &[Ofd] = &[Self::PlatformaOfd, Self::Magnit];
-    pub fn is_platforma_ofd(&self) -> bool {
-        self == &Self::PlatformaOfd
+    pub const ALL: &[Self] = &[Self::PlatformaOfd, Self::Magnit];
+    pub const fn is_platforma_ofd(&self) -> bool {
+        matches!(self, Self::PlatformaOfd)
     }
-    pub fn name(&self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         match self {
             Self::Magnit => "Магнит (Тандер)",
             Self::PlatformaOfd => "Платформа ОФД",
         }
     }
-    pub fn id(&self) -> &'static str {
+    pub const fn id(&self) -> &'static str {
         match self {
             Self::Magnit => "magnit",
             Self::PlatformaOfd => "platforma-ofd",
