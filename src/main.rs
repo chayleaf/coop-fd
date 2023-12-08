@@ -42,7 +42,7 @@ struct Receipt {
 impl Receipt {
     fn fnifp(&self) -> Option<String> {
         (!self.r#fn.is_empty() && !self.i.is_empty() && !self.fp.is_empty())
-            .then(|| format!("{}_{}_{}", self.r#fn, self.i, self.fp))
+            .then(|| format!("{}_{}_{}", self.r#fn, self.i, self.fp).replace(['.', '/', '\\'], ""))
     }
 }
 
