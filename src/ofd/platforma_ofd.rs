@@ -232,7 +232,7 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
                     .into_owned();
                 let text = res.text().await?;
                 let mut path = config.data_path("raw/platforma-ofd");
-                path.push(rec.id.clone() + ".html");
+                path.push(rec.id.replace(['/', '\\', '.'], "") + ".html");
                 if let Err(err) = tokio::fs::write(path, &text).await {
                     log::error!("failed to write raw receipt: {err:?}");
                 }
