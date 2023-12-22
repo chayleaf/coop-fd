@@ -7,3 +7,4 @@ config.json
 *.jpg
 *.jpeg
 *.gif
+/test_data

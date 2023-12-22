@@ -12,7 +12,7 @@
   outputs = { crane, nixpkgs, ... }: let
     inherit (nixpkgs) lib;
     mkPkgs = pkgs: let
-      craneLib = (crane.mkLib pkgs);
+      craneLib = crane.mkLib pkgs;
     in {
       default = craneLib.buildPackage {
         pname = "coop-ofd";

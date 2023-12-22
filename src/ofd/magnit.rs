@@ -292,13 +292,13 @@ fn visit_stmt(stmt: &Stmt) -> Vec<ZulNode> {
     ret
 }
 
-async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
+async fn stage1(config: &Config, rec: &Receipt) -> reqwest::Result<String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/118.0")
         .cookie_store(true)
         .build()?;
     let url = format!(
-        "https://check.ofd-magnit.ru/CheckWebApp/fds.zul?fn={}&fs={}&fd={}",
+        "https://check.ofd-magnit.ru/CheckWebApp/fds.zul?fn={}&fs={:0>10}&fd={}",
         rec.r#fn, rec.fp, rec.i
     );
     let res = client
@@ -311,6 +311,10 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
     if let Err(err) = tokio::fs::write(path, &res).await {
         log::error!("failed to write raw receipt: {err:?}");
     }
+    Ok(res)
+}
+
+fn stage2(res: &str, rec: &mut Receipt) -> reqwest::Result<bool> {
     let data = res
         .split("<script class=\"z-runonce\" type=\"text/javascript\">")
         .last()
@@ -322,6 +326,8 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
     if let Some(tree) = data.try_tree() {
         for item in tree.items() {
             for x in visit_stmt(&item) {
+                #[cfg(test)]
+                eprintln!("{x}");
                 if let Some(receipt) = x.get_element_by_id("receiptDiv") {
                     if let Some(details) = receipt.get_element_by_id("detailsGrid") {
                         let mut labels = details
@@ -471,5 +477,20 @@ async fn fetch2(config: &Config, rec: &mut Receipt) -> reqwest::Result<bool> {
 }
 
 pub(crate) async fn fetch(config: &'static Config, mut rec: Receipt) -> Option<Receipt> {
-    fetch2(config, &mut rec).await.ok()?.then_some(rec)
+    stage1(config, &rec)
+        .await
+        .and_then(|res| stage2(&res, &mut rec))
+        .ok()?
+        .then_some(rec)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test() {
+        let test_data = include_str!("../../test_data/magnit1.html");
+        let mut rec = crate::Receipt::default();
+        assert!(super::stage2(test_data, &mut rec).unwrap());
+        assert_eq!(rec.items.len(), 18);
+    }
 }
