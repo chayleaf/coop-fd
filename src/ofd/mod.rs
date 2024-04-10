@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 
 use crate::{Config, Receipt};
 
@@ -24,7 +24,12 @@ pub enum Ofd {
 
 impl Ofd {
     // PlatformaOfd must go first since it's the default in the web UI
-    pub const ALL: &'static [Self] = &[Self::PlatformaOfd, Self::Magnit, Self::Beeline, Self::Taxcom];
+    pub const ALL: &'static [Self] = &[
+        Self::PlatformaOfd,
+        Self::Magnit,
+        Self::Beeline,
+        Self::Taxcom,
+    ];
     pub const fn is_platforma_ofd(&self) -> bool {
         matches!(self, Self::PlatformaOfd)
     }
@@ -36,13 +41,16 @@ impl Ofd {
             Self::Taxcom => "Такском",
         }
     }
-    pub const fn id(&self) -> &'static str {
-        match self {
+}
+
+impl Display for Ofd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
             Self::Beeline => "beeline",
             Self::Magnit => "magnit",
             Self::PlatformaOfd => "platforma-ofd",
             Self::Taxcom => "taxcom",
-        }
+        })
     }
 }
 

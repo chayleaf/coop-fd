@@ -357,7 +357,8 @@ async fn main() {
         )
         .expect("invalid config.json"),
     ));
-    TZ.set(config.timezone.parse().expect("invalid timezone")).unwrap();
+    TZ.set(config.timezone.parse().expect("invalid timezone"))
+        .unwrap();
 
     let parser = liquid::ParserBuilder::with_stdlib()
         .filter(CurrencyFilter)
@@ -577,19 +578,11 @@ async fn main() {
             }
         },
         async {
-            tokio::fs::create_dir_all(config.data_path("raw/platforma-ofd"))
-                .await
-                .unwrap();
-        },
-        async {
-            tokio::fs::create_dir_all(config.data_path("raw/magnit"))
-                .await
-                .unwrap();
-        },
-        async {
-            tokio::fs::create_dir_all(config.data_path("raw/beeline"))
-                .await
-                .unwrap();
+            for ofd in Ofd::ALL {
+                tokio::fs::create_dir_all(config.data_path(format!("raw/{ofd}")))
+                    .await
+                    .unwrap();
+            }
         },
     );
 
@@ -604,7 +597,7 @@ async fn main() {
                         "extra_qr_processing": format!("if({})return;", config.ignore_qr_condition),
                         "usernames": &config.usernames,
                         "ofds": Ofd::ALL.iter().map(|x| liquid::object!({
-                            "id": x.id(),
+                            "id": x.to_string(),
                             "name": x.name(),
                         })).collect::<Vec<_>>(),
                     })).unwrap_or_else(|err| format!("Error: {err}")))
