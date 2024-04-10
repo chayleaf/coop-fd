@@ -6,6 +6,7 @@ use crate::{Config, Receipt};
 mod beeline;
 mod magnit;
 mod platforma_ofd;
+mod taxcom;
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 pub enum Ofd {
@@ -17,11 +18,13 @@ pub enum Ofd {
     #[allow(clippy::enum_variant_names)]
     #[serde(rename = "platforma-ofd")]
     PlatformaOfd,
+    #[serde(rename = "taxcom")]
+    Taxcom,
 }
 
 impl Ofd {
     // PlatformaOfd must go first since it's the default in the web UI
-    pub const ALL: &'static [Self] = &[Self::PlatformaOfd, Self::Magnit, Self::Beeline];
+    pub const ALL: &'static [Self] = &[Self::PlatformaOfd, Self::Magnit, Self::Beeline, Self::Taxcom];
     pub const fn is_platforma_ofd(&self) -> bool {
         matches!(self, Self::PlatformaOfd)
     }
@@ -30,6 +33,7 @@ impl Ofd {
             Self::Beeline => "ОФД Билайн",
             Self::Magnit => "Магнит (Тандер)",
             Self::PlatformaOfd => "Платформа ОФД",
+            Self::Taxcom => "Такском",
         }
     }
     pub const fn id(&self) -> &'static str {
@@ -37,6 +41,7 @@ impl Ofd {
             Self::Beeline => "beeline",
             Self::Magnit => "magnit",
             Self::PlatformaOfd => "platforma-ofd",
+            Self::Taxcom => "taxcom",
         }
     }
 }
@@ -50,6 +55,7 @@ impl FromStr for Ofd {
             "beeline" => Self::Beeline,
             "magnit" => Self::Magnit,
             "platforma-ofd" => Self::PlatformaOfd,
+            "taxcom" => Self::Taxcom,
             _ => return Err(()),
         })
     }
@@ -69,6 +75,7 @@ pub(crate) async fn fetch(config: &'static Config, rec: Receipt) -> Option<Recei
         Ofd::Beeline => beeline::fetch(config, rec).await?,
         Ofd::Magnit => magnit::fetch(config, rec).await?,
         Ofd::PlatformaOfd => platforma_ofd::fetch(config, rec).await?,
+        Ofd::Taxcom => taxcom::fetch(config, rec).await?,
     };
 
     if let Some(fnifp) = rec.fnifp() {
