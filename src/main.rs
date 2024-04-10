@@ -46,6 +46,33 @@ impl Receipt {
     }
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(from = "u8")]
+enum Operation {
+    Unknown = 0,
+    // Приход
+    Incoming = 1,
+    // Возврат прихода
+    CancelIncoming = 2,
+    // Расход
+    Outgoing = 3,
+    // Возврат расхода
+    CancelOutgoing = 4,
+}
+
+impl From<u8> for Operation {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Self::Incoming,
+            2 => Self::CancelIncoming,
+            3 => Self::Outgoing,
+            4 => Self::CancelOutgoing,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct Item {
     name: String,
@@ -202,12 +229,13 @@ async fn add_transaction(config: &Config, mut tr: Transaction) -> HashMap<String
     lock.clone()
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 struct Config {
     usernames: IndexSet<String>,
     listener: String,
     data_path: PathBuf,
     ignore_qr_condition: String,
+    timezone: String,
 }
 
 impl Config {
@@ -312,6 +340,8 @@ fn digits(s: &str) -> String {
     ret
 }
 
+static TZ: OnceCell<chrono_tz::Tz> = OnceCell::const_new();
+
 #[tokio::main]
 async fn main() {
     env_logger::init();
@@ -327,6 +357,7 @@ async fn main() {
         )
         .expect("invalid config.json"),
     ));
+    TZ.set(config.timezone.parse().expect("invalid timezone")).unwrap();
 
     let parser = liquid::ParserBuilder::with_stdlib()
         .filter(CurrencyFilter)
@@ -552,6 +583,11 @@ async fn main() {
         },
         async {
             tokio::fs::create_dir_all(config.data_path("raw/magnit"))
+                .await
+                .unwrap();
+        },
+        async {
+            tokio::fs::create_dir_all(config.data_path("raw/beeline"))
                 .await
                 .unwrap();
         },
@@ -1066,9 +1102,11 @@ async fn main() {
                                         }))
                                         .unwrap_or_else(|err| format!("Error: {err}"))
                                     } else {
+                                        log::error!("ofd fetch failed");
                                         "error".to_owned()
                                     }
                                 } else {
+                                    log::error!("missing fn/i/fp");
                                     "error".to_owned()
                                 }
                             } else {

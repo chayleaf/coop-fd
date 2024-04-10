@@ -3,42 +3,51 @@ use std::str::FromStr;
 
 use crate::{Config, Receipt};
 
+mod beeline;
 mod magnit;
 mod platforma_ofd;
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 pub enum Ofd {
+    #[serde(rename = "beeline")]
+    Beeline,
     #[serde(rename = "magnit")]
     Magnit,
     #[default]
+    #[allow(clippy::enum_variant_names)]
     #[serde(rename = "platforma-ofd")]
     PlatformaOfd,
 }
 
 impl Ofd {
     // PlatformaOfd must go first since it's the default in the web UI
-    pub const ALL: &[Self] = &[Self::PlatformaOfd, Self::Magnit];
+    pub const ALL: &'static [Self] = &[Self::PlatformaOfd, Self::Magnit, Self::Beeline];
     pub const fn is_platforma_ofd(&self) -> bool {
         matches!(self, Self::PlatformaOfd)
     }
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::Beeline => "ОФД Билайн",
             Self::Magnit => "Магнит (Тандер)",
             Self::PlatformaOfd => "Платформа ОФД",
         }
     }
     pub const fn id(&self) -> &'static str {
         match self {
+            Self::Beeline => "beeline",
             Self::Magnit => "magnit",
             Self::PlatformaOfd => "platforma-ofd",
         }
     }
 }
 
+// !!!!!!!!!!!!!! also add below
+
 impl FromStr for Ofd {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
+            "beeline" => Self::Beeline,
             "magnit" => Self::Magnit,
             "platforma-ofd" => Self::PlatformaOfd,
             _ => return Err(()),
@@ -57,6 +66,7 @@ pub(crate) async fn fetch(config: &'static Config, rec: Receipt) -> Option<Recei
         }
     }
     let rec = match rec.ofd {
+        Ofd::Beeline => beeline::fetch(config, rec).await?,
         Ofd::Magnit => magnit::fetch(config, rec).await?,
         Ofd::PlatformaOfd => platforma_ofd::fetch(config, rec).await?,
     };
