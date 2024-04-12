@@ -48,10 +48,23 @@
           package = lib.mkOption { type = lib.types.package; };
           config = lib.mkOption {
             type = lib.types.submodule {
-              freeformType = format.type;
+              options.usernames = lib.mkOption {
+                type = with lib.types; listOf str;
+              };
+              options.listener = lib.mkOption {
+                type = lib.types.str;
+              };
+              options.ignore_qr_condition = lib.mkOption {
+                type = lib.types.str;
+                default = "false";
+              };
               options.data_path = lib.mkOption {
                 type = lib.types.path;
                 default = "/var/lib/coop-ofd";
+              };
+              options.timezone = lib.mkOption {
+                type = lib.types.str;
+                default = "Europe/Moscow";
               };
             };
           };
