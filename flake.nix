@@ -22,8 +22,6 @@
             builtins.any (lib.flip lib.hasSuffix path) [ ".js" ".map" ".html" ".css" ]
             || craneLib.filterCargoSources path type;
         };
-        nativeBuildInputs = with pkgs; [ pkg-config rustPlatform.bindgenHook ];
-        buildInputs = with pkgs; [ tesseract leptonica ];
         doCheck = false;
       };
     };
