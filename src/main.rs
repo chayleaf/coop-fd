@@ -129,11 +129,105 @@ mod iso8601 {
     }
 }
 
+mod str_or_int {
+    use serde::{
+        de::{Error, Unexpected, Visitor},
+        Deserializer,
+    };
+
+    struct Vis;
+    impl<'de> Visitor<'de> for Vis {
+        type Value = u32;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an integer")
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            v.parse()
+                .map_err(|_| E::invalid_value(Unexpected::Str(v), &self))
+        }
+        fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_str(v)
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_str(&v)
+        }
+        fn visit_u8<E>(self, v: u8) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(v.into())
+        }
+        fn visit_u16<E>(self, v: u16) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(v.into())
+        }
+        fn visit_u32<E>(self, v: u32) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(v)
+        }
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            v.try_into()
+                .map_err(|_| E::invalid_value(Unexpected::Unsigned(v), &self))
+        }
+        fn visit_i8<E>(self, v: i8) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            v.try_into()
+                .map_err(|_| E::invalid_value(Unexpected::Signed(v.into()), &self))
+        }
+        fn visit_i16<E>(self, v: i16) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            v.try_into()
+                .map_err(|_| E::invalid_value(Unexpected::Signed(v.into()), &self))
+        }
+        fn visit_i32<E>(self, v: i32) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            v.try_into()
+                .map_err(|_| E::invalid_value(Unexpected::Signed(v.into()), &self))
+        }
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            v.try_into()
+                .map_err(|_| E::invalid_value(Unexpected::Signed(v), &self))
+        }
+    }
+    pub fn deserialize<'de, D>(d: D) -> Result<u32, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        d.deserialize_any(Vis)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 enum TransactionMeta {
     Receipt {
         r#fn: String,
-        i: String,
+        #[serde(deserialize_with = "str_or_int::deserialize")]
+        i: u32,
         paid: HashMap<String, BTreeSet<usize>>,
     },
     Comment(String),
@@ -519,7 +613,7 @@ async fn main() {
                     )
                 });
                 if let Some(TransactionMeta::Receipt { r#fn, i, paid: _ }) = tr.meta {
-                    paid_receipts.insert(format!("{fn}_{i:08}"));
+                    paid_receipts.insert(format!("{fn}_{i:07}"));
                 }
                 for (k, v) in &tr.balance_changes {
                     let x = balance.entry(k.clone()).or_default();
@@ -965,7 +1059,7 @@ async fn main() {
                         }
                         let mut tr = Transaction::new(Some(TransactionMeta::Receipt {
                             r#fn: r#fn.clone(),
-                            i: i.to_string(),
+                            i,
                             paid,
                         }));
                         let items = rec.get_all::<fields::ReceiptItem>().unwrap_or_default();
@@ -1021,7 +1115,7 @@ async fn main() {
                             }
                             val.count += 1;
                         }
-                        paid_receipts.insert(format!("{fn}_{i:08}"));
+                        paid_receipts.insert(format!("{fn}_{i:07}"));
                         let mut balance = balance.into_iter().collect::<Vec<_>>();
                         balance.sort_by_key(|(k, _)| {
                             config
@@ -1131,7 +1225,7 @@ async fn main() {
                                             add_t.render(&liquid::object!({
                                                 "total": rec.get::<fields::TotalSum>().ok().flatten().unwrap_or_default(),
                                                 "username": username,
-                                                "already_paid": paid_receipts.contains(&format!("{fn}_{i:08}")),
+                                                "already_paid": paid_receipts.contains(&format!("{fn}_{i:07}")),
                                                 "fn": r#fn,
                                                 "i": i,
                                                 "items": rec.get_all::<fields::ReceiptItem>().unwrap_or_default().into_iter().enumerate().map(|(i, item)| {
