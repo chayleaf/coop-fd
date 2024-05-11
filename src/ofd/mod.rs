@@ -180,6 +180,7 @@ pub(crate) async fn fetch(config: &Config, mut rec: Object) -> Result<Object, Er
         parsed
     } else {
         let data = provider.fetch_raw_data(&mut rec).await?;
+        log::info!("raw data: {data:?}");
         #[cfg(debug_assertions)]
         let _ = tokio::fs::write(raw_path, &data).await;
         #[allow(clippy::let_and_return)]
