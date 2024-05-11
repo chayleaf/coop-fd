@@ -326,7 +326,6 @@ struct Config {
     listener: String,
     data_path: PathBuf,
     ignore_qr_condition: String,
-    timezone: String,
     #[serde(default)]
     private1_endpoint: Option<String>,
 }
@@ -420,8 +419,6 @@ async fn save_list(config: &Config, list: &[ListItem]) -> io::Result<()> {
     tokio::fs::rename(path1, path2).await
 }
 
-static TZ: OnceCell<chrono_tz::Tz> = OnceCell::const_new();
-
 #[allow(clippy::type_complexity)]
 static STATE_TX: OnceCell<mpsc::Sender<Box<dyn Send + Sync + FnOnce(&mut State)>>> =
     OnceCell::const_new();
@@ -445,8 +442,6 @@ async fn main() {
         )
         .expect("invalid config.json"),
     ));
-    TZ.set(config.timezone.parse().expect("invalid timezone"))
-        .unwrap();
 
     let parser = liquid::ParserBuilder::with_stdlib()
         .filter(CurrencyFilter)

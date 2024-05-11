@@ -2,6 +2,5 @@
   "usernames": ["user1", "user2"],
   "listener": "0.0.0.0:3000",
   "data_path": "data",
-  "ignore_qr_condition": "false",
-  "timezone": "Europe/Moscow"
+  "ignore_qr_condition": "false"
 }

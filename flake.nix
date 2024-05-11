@@ -60,10 +60,6 @@
                 type = lib.types.path;
                 default = "/var/lib/coop-fd";
               };
-              options.timezone = lib.mkOption {
-                type = lib.types.str;
-                default = "Europe/Moscow";
-              };
               options.private1_endpoint = lib.mkOption {
                 type = with lib.types; nullOr str;
                 default = null;
@@ -78,6 +74,7 @@
             after = [ "network.target" ];
             wantedBy = [ "multi-user.target" ];
             environment.CONFIG_FILE = cfgFile;
+            environment.RUST_LOG = "info";
             serviceConfig = {
               DynamicUser = true;
               ExecStart = "${cfg.package}/bin/coop-fd";
