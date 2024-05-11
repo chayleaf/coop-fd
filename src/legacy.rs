@@ -116,6 +116,7 @@ pub async fn migrate_json_to_ffd(config: &Config) {
             if ofd::fetch(config, rec).await.is_ok() {
                 log::info!("migrated {fn}_{i}_{fp}");
             } else {
+                log::info!("failed to migrate {fn}_{i}_{fp}");
                 have_errors = true;
             }
             // don't ddos providers
@@ -125,5 +126,7 @@ pub async fn migrate_json_to_ffd(config: &Config) {
     if !have_errors {
         log::info!("migration done");
         super::mutate_state(|state| state.receipt_version = ReceiptFormatVersion::Fns);
+    } else {
+        log::info!("errors occured");
     }
 }
