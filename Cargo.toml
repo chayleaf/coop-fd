@@ -2,7 +2,7 @@
 members = ["fiscal-data", "fiscal-data-derive"]
 
 [package]
-name = "coop-ofd"
+name = "coop-fd"
 version = "0.1.0"
 edition = "2021"
 
@@ -31,4 +31,3 @@ uuid = { version = "1.6.1", features = ["v4"] }
 fiscal-data = { path = "./fiscal-data" }
 thiserror = "1.0.60"
 async-trait = "0.1.80"
-serde_with = { version = "3.8.1", features = ["base64"] }

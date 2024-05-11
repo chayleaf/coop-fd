@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use fiscal_data::{enums, fields, Ffd, Object};
 use serde::Deserialize;
-use serde_with::serde_as;
 
 use super::{Error, Provider};
 use crate::Config;
@@ -200,7 +199,6 @@ struct OfdItem {
 #[derive(Clone, Debug, Default, Deserialize, Ffd)]
 #[serde(default)]
 // some fields have underscores, so we can't use rename_all
-#[serde_as]
 #[allow(non_snake_case)]
 struct Document {
     /// Наименование документа / 1000
@@ -261,6 +259,7 @@ struct Document {
     PaymentAgent_Phone: Vec<String>,
     /// Номер телефона оператора по переводу денежных средств / 1075
     #[ffd(tag = fields::TransferOperatorPhone)]
+    #[serde(with = "fiscal_data::json::one_or_many")]
     MoneyOperator_Phone: Vec<String>,
     /// Номер телефона банковского платежного агента / 1082?
     BankAgent_Phone: Option<String>,
@@ -308,9 +307,9 @@ struct Document {
     #[ffd(tag = fields::DocNum)]
     Document_Number: u64,
     /// Фискальный признак документа / 1077
-    #[serde_as(as = "Base64")]
     #[ffd(tag = fields::DocFiscalSign)]
-    FiscalSign: Vec<u8>,
+    #[serde(with = "fiscal_data::json::base64_array_opt")]
+    FiscalSign: [u8; 6],
     /// Фискальный признак документа
     DecimalFiscalSign: String,
     /// Количество кассовых чеков за смену / 1118

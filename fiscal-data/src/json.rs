@@ -5,7 +5,6 @@ use serde::{
     de::{Unexpected, Visitor},
     Deserialize, Deserializer, Serialize,
 };
-use serde_with::serde_as;
 
 use crate::{self as fiscal_data, fields, Error, FieldInternal, Object, TlvType};
 
@@ -205,7 +204,7 @@ pub mod as_localtime {
         }
     }
 }
-pub mod as_localtime_option {
+pub mod as_localtime_opt {
     use std::fmt;
 
     use serde::{de::Visitor, Deserialize, Deserializer, Serializer};
@@ -368,7 +367,7 @@ pub mod fiscal_sign_8_opt {
         }
     }
 }
-pub mod bitvec1_option {
+pub mod bitvec1_opt {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn deserialize<'de, D, T>(de: D) -> Result<Option<T>, D::Error>
@@ -435,12 +434,6 @@ pub mod marking_code_opt {
         {
             Ok(Some(v.to_owned()))
         }
-        fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            deserializer.deserialize_any(self)
-        }
         fn visit_none<E>(self) -> Result<Self::Value, E>
         where
             E: serde::de::Error,
@@ -493,12 +486,6 @@ pub mod bool_num {
         type Value = bool;
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a boolean")
-        }
-        fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            deserializer.deserialize_any(self)
         }
         fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
         where
@@ -586,12 +573,6 @@ pub mod bool_num_opt {
         type Value = Option<bool>;
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a boolean or none")
-        }
-        fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            deserializer.deserialize_any(self)
         }
         fn visit_none<E>(self) -> Result<Self::Value, E>
         where
@@ -681,6 +662,200 @@ pub mod bool_num_opt {
         } else {
             ser.serialize_none()
         }
+    }
+}
+pub mod base64_vec_opt {
+    use base64::prelude::*;
+    use std::fmt;
+
+    use serde::{
+        de::{Error, Visitor},
+        Deserializer, Serializer,
+    };
+    struct Vis;
+    impl<'de> Visitor<'de> for Vis {
+        type Value = Option<Vec<u8>>;
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a base64 string or none")
+        }
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_str(self)
+        }
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_str(&v)
+        }
+        fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_str(v)
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(Some(
+                BASE64_STANDARD.decode(v).map_err(|err| E::custom(err))?,
+            ))
+        }
+    }
+    pub fn deserialize<'de, D>(de: D) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        de.deserialize_any(Vis)
+    }
+    pub fn serialize<S>(x: &Option<Vec<u8>>, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if let Some(x) = x {
+            ser.serialize_some(&BASE64_STANDARD.encode(x))
+        } else {
+            ser.serialize_none()
+        }
+    }
+}
+pub mod base64_array_opt {
+    use base64::prelude::*;
+    use std::fmt;
+
+    use serde::{
+        de::{Error, Visitor},
+        Deserializer, Serializer,
+    };
+    struct Vis<const N: usize>;
+    impl<'de, const N: usize> Visitor<'de> for Vis<N> {
+        type Value = Option<[u8; N]>;
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            write!(formatter, "a base64 string containing {N} bytes or none")
+        }
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_str(self)
+        }
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_str(&v)
+        }
+        fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_str(v)
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(Some(
+                BASE64_STANDARD
+                    .decode(v)
+                    .map_err(|err| E::custom(err))?
+                    .try_into()
+                    .map_err(|x: Vec<u8>| E::invalid_length(x.len(), &self))?,
+            ))
+        }
+    }
+    pub fn deserialize<'de, D, const N: usize>(de: D) -> Result<Option<[u8; N]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        de.deserialize_any(Vis)
+    }
+    pub fn serialize<S, const N: usize>(x: &Option<[u8; N]>, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if let Some(x) = x {
+            ser.serialize_some(&BASE64_STANDARD.encode(x))
+        } else {
+            ser.serialize_none()
+        }
+    }
+}
+pub mod base64_array {
+    use base64::prelude::*;
+    use std::fmt;
+
+    use serde::{
+        de::{Error, Visitor},
+        Deserializer, Serializer,
+    };
+    struct Vis<const N: usize>;
+    impl<'de, const N: usize> Visitor<'de> for Vis<N> {
+        type Value = [u8; N];
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            write!(formatter, "a base64 string containing {N} bytes")
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_str(&v)
+        }
+        fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_str(v)
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            BASE64_STANDARD
+                .decode(v)
+                .map_err(|err| E::custom(err))?
+                .try_into()
+                .map_err(|x: Vec<u8>| E::invalid_length(x.len(), &self))
+        }
+    }
+    pub fn deserialize<'de, D, const N: usize>(de: D) -> Result<[u8; N], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        de.deserialize_any(Vis)
+    }
+    pub fn serialize<S>(x: &[u8], ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        ser.serialize_some(&BASE64_STANDARD.encode(x))
     }
 }
 
@@ -776,7 +951,6 @@ impl<'de, const N: u16> Deserialize<'de> for Constant<N> {
 }
 
 #[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
-#[serde_as]
 pub struct FiscalReport {
     #[ffd(special = "tag")]
     pub code: Constant<1>,
@@ -788,9 +962,12 @@ pub struct FiscalReport {
     )]
     #[serde(rename = "messageFiscalSign")]
     pub message_fiscal_sign: Option<[u8; 8]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_vec_opt"
+    )]
     #[serde(rename = "rawData")]
-    #[serde_as(as = "Base64")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
     #[serde(rename = "fiscalDocumentFormatVer")]
@@ -936,7 +1113,6 @@ pub struct FiscalReport {
 }
 
 #[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
-#[serde_as]
 pub struct FiscalReportCorrection {
     #[ffd(special = "tag")]
     pub code: Constant<11>,
@@ -948,9 +1124,12 @@ pub struct FiscalReportCorrection {
     )]
     #[serde(rename = "messageFiscalSign")]
     pub message_fiscal_sign: Option<[u8; 8]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_vec_opt"
+    )]
     #[serde(rename = "rawData")]
-    #[serde_as(as = "Base64")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
     #[serde(rename = "fiscalDocumentFormatVer")]
@@ -1061,7 +1240,7 @@ pub struct FiscalReportCorrection {
     pub correction_kkt_reason_code: Option<<fields::KktInfoUpdateReason as FieldInternal>::Type>,
     #[ffd(tag = fields::KktInfoUpdateReason)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "correctionReasonCode", with = "bitvec1_option")]
+    #[serde(rename = "correctionReasonCode", with = "bitvec1_opt")]
     pub correction_reason_code: Option<<fields::KktInfoUpdateReason as FieldInternal>::Type>,
     #[ffd(tag = fields::OperatorInn)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1218,7 +1397,6 @@ pub struct CorrectionCounters {
 }
 
 #[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
-#[serde_as]
 pub struct OpenShift {
     #[ffd(special = "tag")]
     pub code: Constant<2>,
@@ -1230,9 +1408,12 @@ pub struct OpenShift {
     )]
     #[serde(rename = "messageFiscalSign")]
     pub message_fiscal_sign: Option<[u8; 8]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_vec_opt"
+    )]
     #[serde(rename = "rawData")]
-    #[serde_as(as = "Base64")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
     #[serde(rename = "fiscalDocumentFormatVer")]
@@ -1320,7 +1501,6 @@ pub struct OpenShift {
 }
 
 #[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
-#[serde_as]
 pub struct CurrentStateReport {
     #[ffd(special = "tag")]
     pub code: Constant<21>,
@@ -1332,9 +1512,12 @@ pub struct CurrentStateReport {
     )]
     #[serde(rename = "messageFiscalSign")]
     pub message_fiscal_sign: Option<[u8; 8]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_vec_opt"
+    )]
     #[serde(rename = "rawData")]
-    #[serde_as(as = "Base64")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
     #[serde(rename = "fiscalDocumentFormatVer")]
@@ -1398,10 +1581,7 @@ pub struct CurrentStateReport {
         Option<<fields::UntransmittedNotificationCount as FieldInternal>::Type>,
     #[ffd(tag = fields::UntransmittedDocDateTime)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(
-        rename = "notTransmittedDocumentsDateTime",
-        with = "as_localtime_option"
-    )]
+    #[serde(rename = "notTransmittedDocumentsDateTime", with = "as_localtime_opt")]
     pub not_transmitted_documents_date_time:
         Option<<fields::UntransmittedDocDateTime as FieldInternal>::Type>,
     #[ffd(tag = fields::CurrentStateAdditionalAttribute)]
@@ -1424,7 +1604,6 @@ pub struct CurrentStateReport {
 }
 
 #[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
-#[serde_as]
 pub struct ReceiptBso<const T: u16> {
     #[ffd(special = "tag")]
     pub code: Constant<T>,
@@ -1436,8 +1615,11 @@ pub struct ReceiptBso<const T: u16> {
     )]
     #[serde(rename = "messageFiscalSign")]
     pub message_fiscal_sign: Option<[u8; 8]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde_as(as = "Base64")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_vec_opt"
+    )]
     #[serde(rename = "rawData")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
@@ -1640,7 +1822,6 @@ pub type Bso = ReceiptBso<4>;
 
 #[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-#[serde_as]
 pub struct Item {
     #[ffd(tag = fields::ItemName)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1701,8 +1882,11 @@ pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nds_sum: Option<<fields::ItemTotalVat as FieldInternal>::Type>,
     #[ffd(tag = fields::ProductCode)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde_as(as = "Base64")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_vec_opt"
+    )]
     pub product_code: Option<Vec<u8>>,
     #[ffd(tag = fields::ProductCodeNew)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1764,7 +1948,7 @@ pub struct BuyerInfo {
 pub struct OperationalDetails {
     #[ffd(tag = fields::OperationDateTime)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "as_localtime_option")]
+    #[serde(with = "as_localtime_opt")]
     pub date_time: Option<<fields::OperationDateTime as FieldInternal>::Type>,
     #[ffd(tag = fields::OperationId)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1919,7 +2103,6 @@ pub struct IndustryDetails {
 }
 
 #[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
-#[serde_as]
 pub struct ReceiptBsoCorrection<const T: u16> {
     #[ffd(special = "tag")]
     pub code: Constant<T>,
@@ -1931,8 +2114,11 @@ pub struct ReceiptBsoCorrection<const T: u16> {
     )]
     #[serde(rename = "messageFiscalSign")]
     pub message_fiscal_sign: Option<[u8; 8]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde_as(as = "Base64")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_vec_opt"
+    )]
     #[serde(rename = "rawData")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
@@ -2146,7 +2332,7 @@ pub type BsoCorrection = ReceiptBsoCorrection<41>;
 pub struct CorrectionBase {
     #[ffd(tag = fields::CorrectedPaymentDate)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "as_localtime_option")]
+    #[serde(with = "as_localtime_opt")]
     pub correction_document_date: Option<<fields::CorrectedPaymentDate as FieldInternal>::Type>,
     #[ffd(tag = fields::FnsActNumber)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2154,7 +2340,6 @@ pub struct CorrectionBase {
 }
 
 #[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
-#[serde_as]
 pub struct CloseShift {
     #[ffd(special = "tag")]
     pub code: Constant<5>,
@@ -2166,9 +2351,12 @@ pub struct CloseShift {
     )]
     #[serde(rename = "messageFiscalSign")]
     pub message_fiscal_sign: Option<[u8; 8]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_vec_opt"
+    )]
     #[serde(rename = "rawData")]
-    #[serde_as(as = "Base64")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
     #[serde(rename = "fiscalDocumentFormatVer")]
@@ -2264,10 +2452,7 @@ pub struct CloseShift {
         Option<<fields::UntransmittedDocCount as FieldInternal>::Type>,
     #[ffd(tag = fields::UntransmittedDocDateTime)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(
-        rename = "notTransmittedDocumentsDateTime",
-        with = "as_localtime_option"
-    )]
+    #[serde(rename = "notTransmittedDocumentsDateTime", with = "as_localtime_opt")]
     pub not_transmitted_documents_date_time:
         Option<<fields::UntransmittedDocDateTime as FieldInternal>::Type>,
     #[ffd(tag = fields::UntransmittedNotificationCount)]
@@ -2296,7 +2481,6 @@ pub struct CloseShift {
 }
 
 #[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
-#[serde_as]
 pub struct CloseArchive {
     #[ffd(special = "tag")]
     pub code: Constant<6>,
@@ -2308,9 +2492,12 @@ pub struct CloseArchive {
     )]
     #[serde(rename = "messageFiscalSign")]
     pub message_fiscal_sign: Option<[u8; 8]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_vec_opt"
+    )]
     #[serde(rename = "rawData")]
-    #[serde_as(as = "Base64")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
     #[serde(rename = "fiscalDocumentFormatVer")]
