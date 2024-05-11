@@ -1,0 +1,19 @@
+[package]
+name = "fiscal-data"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitflags = "2.5.0"
+chrono = { version = "0.4.38", default-features = false }
+encoding_rs = "0.8.34"
+num_enum = "0.7.2"
+serde = { version = "1.0.198", features = ["derive"] }
+thiserror = "1.0.59"
+fiscal-data-derive = { path = "../fiscal-data-derive" }
+serde_with = { version = "3.8.1", features = ["base64"] }
+
+[dev-dependencies]
+serde_json = "1.0"

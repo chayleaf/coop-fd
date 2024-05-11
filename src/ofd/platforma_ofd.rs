@@ -3,6 +3,8 @@ use std::{collections::HashMap, ffi::CStr};
 use crate::{copy_ref, digits, Config, Item, Receipt};
 use tokio::sync::mpsc;
 
+use super::Ofd;
+
 fn parse(data: &str, ret: &mut Receipt) -> Option<()> {
     // TODO: parse older formats? just for fun
     let data = data.split("fido_cheque_container\">").nth(1)?;
@@ -278,4 +280,23 @@ pub(crate) async fn fetch(config: &'static Config, rec: Receipt) -> Option<Recei
     }
     drop(tx);
     rx.recv().await
+}
+
+pub struct PlatformaOfd;
+impl Ofd for PlatformaOfd {
+    fn id(&self) -> &'static str {
+        "platforma-ofd"
+    }
+    fn name(&self) -> &'static str {
+        "ООО \"Эвотор ОФД\""
+    }
+    fn url(&self) -> &'static str {
+        "www.platformaofd.ru"
+    }
+    fn exts(&self) -> &'static [&'static str] {
+        &["html"]
+    }
+    fn inn(&self) -> &'static str {
+        "9715260691"
+    }
 }

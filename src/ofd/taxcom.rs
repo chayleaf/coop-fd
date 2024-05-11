@@ -1,5 +1,7 @@
 use crate::{digits, Config, Item, Receipt};
 
+use super::Provider;
+
 async fn stage1(rec: &mut Receipt) -> reqwest::Result<String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/118.0")
@@ -212,6 +214,25 @@ pub(crate) async fn fetch(_config: &'static Config, mut rec: Receipt) -> Option<
     };
     stage2(&res, &mut rec);
     Some(rec)
+}
+
+pub struct Taxcom;
+impl Provider for Taxcom {
+    fn id(&self) -> &'static str {
+        "taxcom"
+    }
+    fn name(&self) -> &'static str {
+        "ООО \"Такском\""
+    }
+    fn url(&self) -> &'static str {
+        "www.taxcom.ru"
+    }
+    fn exts(&self) -> &'static [&'static str] {
+        &["json"]
+    }
+    fn inn(&self) -> &'static str {
+        "7704211201"
+    }
 }
 
 #[cfg(test)]

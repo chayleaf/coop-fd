@@ -7,95 +7,57 @@ use std::{
 use axum::response::IntoResponse;
 use chrono::Utc;
 use dashmap::DashMap;
+use fiscal_data::{enums::PaymentType, fields, Object, TlvType};
 use indexmap::IndexSet;
 use liquid_core::{Display_filter, Filter, FilterReflection, ParseFilter, Runtime, ValueView};
-use ofd::Ofd;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{OnceCell, RwLock};
+use tokio::sync::{mpsc, OnceCell, RwLock};
 
+mod legacy;
 mod ofd;
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct Company {
-    name: String,
-    inn: String,
-}
+const QR_DATE_FORMAT: &str = "%Y%m%dT%H%M";
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct Receipt {
-    #[serde(default, skip_serializing_if = "Ofd::is_platforma_ofd")]
-    ofd: Ofd,
-    company: Company,
-    items: Vec<Item>,
-    total: u64,
-    total_cash: u64,
-    total_card: u64,
-    total_tax: u64,
-    r#fn: String,
-    fp: String,
-    i: String,
-    n: String,
-    id: String,
-    date: String,
-}
-
-impl Receipt {
-    fn fnifp(&self) -> Option<String> {
-        (!self.r#fn.is_empty() && !self.i.is_empty() && !self.fp.is_empty())
-            .then(|| format!("{}_{}_{}", self.r#fn, self.i, self.fp).replace(['.', '/', '\\'], ""))
-    }
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(from = "u8")]
-enum Operation {
-    Unknown = 0,
-    // Приход
-    Incoming = 1,
-    // Возврат прихода
-    CancelIncoming = 2,
-    // Расход
-    Outgoing = 3,
-    // Возврат расхода
-    CancelOutgoing = 4,
-}
-
-impl From<u8> for Operation {
-    fn from(value: u8) -> Self {
-        match value {
-            1 => Self::Incoming,
-            2 => Self::CancelIncoming,
-            3 => Self::Outgoing,
-            4 => Self::CancelOutgoing,
-            _ => Self::Unknown,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct Item {
-    name: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    id: String,
-    count: f64,
-    unit: String,
-    per_item: u64,
-    total: u64,
-    tax: u64,
-}
-
-fn parse_qr(s: &str) -> Receipt {
-    let mut ret = Receipt::default();
+fn parse_qr(s: &str) -> fiscal_data::Object {
+    let mut ret = fiscal_data::Object::new();
     for (k, v) in s.split('&').filter_map(|x| x.split_once('=')) {
         match k {
-            "ofd" => ret.ofd = v.parse().unwrap_or_default(),
-            "t" => ret.date = v.to_owned(),
-            "s" => ret.total = v.replace('.', "").parse::<u64>().unwrap_or_default(),
-            "fn" => ret.r#fn = v.to_owned(),
-            "i" => ret.i = v.to_owned(),
-            "fp" => ret.fp = v.to_owned(),
-            "n" => ret.n = v.to_owned(),
+            "ofd" => {
+                let _ = ofd::registry().fill(v, &mut ret);
+            }
+            "t" => {
+                if let Ok(x) = chrono::NaiveDateTime::parse_from_str(v, QR_DATE_FORMAT) {
+                    let _ = ret.set::<fiscal_data::fields::DateTime>(x);
+                }
+            }
+            "s" => {
+                if let Ok(x) = v.replace('.', "").parse::<u64>() {
+                    let _ = ret.set::<fiscal_data::fields::TotalSum>(x);
+                }
+            }
+            "fn" => {
+                if v.bytes().all(|x| x.is_ascii_digit()) {
+                    let _ = ret.set::<fiscal_data::fields::DriveNum>(v.to_owned());
+                }
+            }
+            "n" => {
+                if let Ok(x) = v.parse::<u8>() {
+                    let _ = ret.set::<fiscal_data::fields::PaymentType>(
+                        fiscal_data::enums::PaymentType::from(x),
+                    );
+                }
+            }
+            "fp" => {
+                if let Ok(x) = v.parse::<u64>() {
+                    let [_, _, a, b, c, d, e, f] = x.to_be_bytes();
+                    let _ = ret.set::<fiscal_data::fields::DocFiscalSign>([a, b, c, d, e, f]);
+                }
+            }
+            "i" => {
+                if let Ok(x) = v.parse::<u32>() {
+                    let _ = ret.set::<fiscal_data::fields::DocNum>(x);
+                }
+            }
             _ => {}
         }
     }
@@ -166,7 +128,6 @@ enum TransactionMeta {
     Receipt {
         r#fn: String,
         i: String,
-        fp: String,
         paid: HashMap<String, BTreeSet<usize>>,
     },
     Comment(String),
@@ -229,6 +190,36 @@ async fn add_transaction(config: &Config, mut tr: Transaction) -> HashMap<String
     lock.clone()
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(from = "u8", into = "u8")]
+enum ReceiptFormatVersion {
+    #[default]
+    Json = 0,
+    Fns = 1,
+}
+impl From<u8> for ReceiptFormatVersion {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Self::Fns,
+            _ => Self::Json,
+        }
+    }
+}
+impl From<ReceiptFormatVersion> for u8 {
+    fn from(value: ReceiptFormatVersion) -> Self {
+        match value {
+            ReceiptFormatVersion::Json => 0,
+            ReceiptFormatVersion::Fns => 1,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct State {
+    receipt_version: ReceiptFormatVersion,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 struct Config {
     usernames: IndexSet<String>,
@@ -236,6 +227,8 @@ struct Config {
     data_path: PathBuf,
     ignore_qr_condition: String,
     timezone: String,
+    #[serde(default)]
+    private1_endpoint: Option<String>,
 }
 
 impl Config {
@@ -327,20 +320,15 @@ async fn save_list(config: &Config, list: &[ListItem]) -> io::Result<()> {
     tokio::fs::rename(path1, path2).await
 }
 
-fn digits(s: &str) -> String {
-    let has_dot = s.contains('.');
-    let mut ret = s
-        .bytes()
-        .filter(u8::is_ascii_digit)
-        .map(|x| x as char)
-        .collect();
-    if !has_dot {
-        ret += "00";
-    }
-    ret
-}
-
 static TZ: OnceCell<chrono_tz::Tz> = OnceCell::const_new();
+
+#[allow(clippy::type_complexity)]
+static STATE_TX: OnceCell<mpsc::Sender<Box<dyn Send + Sync + FnOnce(&mut State)>>> =
+    OnceCell::const_new();
+
+async fn mutate_state(func: impl 'static + Send + Sync + FnOnce(&mut State)) {
+    STATE_TX.get().unwrap().send(Box::new(func)).await.unwrap();
+}
 
 #[tokio::main]
 async fn main() {
@@ -371,7 +359,7 @@ async fn main() {
 
     tokio::join!(
         async {
-            tokio::fs::create_dir_all(config.data_path("parsed"))
+            tokio::fs::create_dir_all(config.data_path("ffd"))
                 .await
                 .unwrap();
         },
@@ -524,14 +512,8 @@ async fn main() {
                         file.path().display()
                     )
                 });
-                if let Some(TransactionMeta::Receipt {
-                    r#fn,
-                    i,
-                    fp,
-                    paid: _,
-                }) = tr.meta
-                {
-                    paid_receipts.insert(format!("{fn}_{i}_{fp}"));
+                if let Some(TransactionMeta::Receipt { r#fn, i, paid: _ }) = tr.meta {
+                    paid_receipts.insert(format!("{fn}_{i:08}"));
                 }
                 for (k, v) in &tr.balance_changes {
                     let x = balance.entry(k.clone()).or_default();
@@ -543,7 +525,7 @@ async fn main() {
         },
         async {
             // fill commodities (can be parallelized)
-            let mut dir = tokio::fs::read_dir(config.data_path("parsed"))
+            let mut dir = tokio::fs::read_dir(config.data_path("ffd"))
                 .await
                 .expect("failed to read receipt list");
             while let Some(file) = dir
@@ -551,40 +533,75 @@ async fn main() {
                 .await
                 .expect("failed to read receipt list entry")
             {
-                if !matches!(file.path().extension().and_then(|x| x.to_str()).map(str::to_lowercase), Some(x) if x.as_str() == "json")
+                if !matches!(file.path().extension().and_then(|x| x.to_str()).map(str::to_lowercase), Some(x) if x.as_str() == "tlv")
                 {
                     continue;
                 }
                 let data = tokio::fs::read(file.path())
                     .await
-                    .expect("failed to read transaction");
-                let rec = serde_json::from_slice::<Receipt>(&data).unwrap_or_else(|err| {
+                    .expect("failed to read ffd");
+                let rec = Object::from_bytes(data).unwrap_or_else(|err| {
                     panic!(
                         "failed to deserialize receipt {}: {err}",
                         file.path().display()
                     )
                 });
-                for item in rec.items {
-                    let mut val = commodities.entry(item.name).or_default();
+                let rec = rec.first_obj().unwrap().unwrap();
+                let date = rec.get::<fields::DateTime>().ok().flatten();
+                for item in rec.get_all::<fields::ReceiptItem>().unwrap_or_default() {
+                    let name = item
+                        .get::<fields::ItemName>()
+                        .ok()
+                        .flatten()
+                        .expect("failed to read item name");
+                    let mut val = commodities.entry(name).or_default();
                     let val = val.value_mut();
-                    val.unit = item.unit;
-                    if let Ok(date) =
-                        chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M")
+                    if let Some(unit) = item
+                        .get::<fields::Unit>()
+                        .ok()
+                        .flatten()
+                        .filter(|unit| !unit.is_empty())
+                        .or_else(|| {
+                            item.get::<fields::ItemQuantityUnit>()
+                                .ok()
+                                .flatten()
+                                .map(|x| x.to_string())
+                        })
                     {
+                        val.unit = unit;
+                    }
+                    if let Some(date) = date {
                         val.last_time = date;
                     }
                     val.count += 1;
                 }
             }
         },
-        async {
-            for ofd in Ofd::ALL {
-                tokio::fs::create_dir_all(config.data_path(format!("raw/{ofd}")))
-                    .await
-                    .unwrap();
-            }
-        },
     );
+
+    ofd::init_registry(config);
+
+    // state actor
+    tokio::spawn(async {
+        let path = config.data_path("state.json");
+        let mut state = tokio::fs::read(&path)
+            .await
+            .ok()
+            .and_then(|f| serde_json::from_slice::<State>(&f).ok())
+            .unwrap_or_default();
+        let (tx, mut rx) = mpsc::channel(32);
+        STATE_TX.set(tx).unwrap();
+        if let ReceiptFormatVersion::Json = state.receipt_version {
+            tokio::spawn(legacy::migrate_json_to_ffd(config));
+        }
+        while let Some(func) = rx.recv().await {
+            func(&mut state);
+            tokio::fs::write(&path, serde_json::to_vec(&state).unwrap())
+                .await
+                .unwrap();
+        }
+    });
+
 
     let app = axum::Router::new()
         .route(
@@ -596,10 +613,19 @@ async fn main() {
                     axum::response::Html::from(root_t.render(&liquid::object!({
                         "extra_qr_processing": format!("if({})return;", config.ignore_qr_condition),
                         "usernames": &config.usernames,
-                        "ofds": Ofd::ALL.iter().map(|x| liquid::object!({
-                            "id": x.to_string(),
-                            "name": x.name(),
-                        })).collect::<Vec<_>>(),
+                        "ofds": ([liquid::object!({
+                            "id": "",
+                            "name": "Авто",
+                        })].into_iter().chain(
+                            ofd::registry()
+                                .by_id
+                                .iter()
+                                .filter(|(_, v)| !v.name().is_empty())
+                                .map(|(k, v)| liquid::object!({
+                                    "id": k,
+                                    "name": format!("{} ({})", v.name(), v.url()),
+                                }))
+                        ).collect::<Vec<liquid::Object>>()),
                     })).unwrap_or_else(|err| format!("Error: {err}")))
                 }
             }),
@@ -774,7 +800,7 @@ async fn main() {
                                 "name": item.key(),
                                 "unit": val.unit,
                                 "count": val.count,
-                                "last_timestamp": val.last_time.timestamp(),
+                                "last_timestamp": val.last_time.and_utc().timestamp(),
                             })
                         })
                         .collect::<Vec<_>>();
@@ -859,25 +885,25 @@ async fn main() {
                     let units = copy_ref(commodities);
                     let list = copy_ref(list);
                     async move {
-                        let Some(r#fn) = f.get("fn") else {
+                        let Some(r#fn) = f.get("fn").filter(|x| x.bytes().all(|x| x.is_ascii_digit())) else {
                             return axum::response::Html::from("missing fn".to_owned());
                         };
-                        let Some(i) = f.get("i") else {
+                        let Some(i) = f.get("i").and_then(|x| x.parse::<u32>().ok()) else {
                             return axum::response::Html::from("missing i".to_owned());
-                        };
-                        let Some(fp) = f.get("fp") else {
-                            return axum::response::Html::from("missing fp".to_owned());
                         };
                         let Some(username) = f.get("username") else {
                             return axum::response::Html::from("missing username".to_owned());
                         };
-                        let mut path = config.data_path("parsed");
-                        path.push(format!("{fn}_{i}_{fp}.json").replace(['/', '\\'], ""));
-                        let Ok(data) = tokio::fs::read(path).await else {
-                            return axum::response::Html::from("missing recept cache".to_owned());
+                        let path = config.data_path(format!("ffd/{fn}_{i:07}.tlv"));
+                        let Ok(data) = tokio::fs::read(&path).await else {
+                            log::error!("missing {path:?}");
+                            return axum::response::Html::from("missing receipt cache 1".to_owned());
                         };
-                        let Ok(rec) = serde_json::from_slice::<Receipt>(&data) else {
-                            return axum::response::Html::from("invalid recept cache".to_owned());
+                        let Ok(rec) = Object::from_bytes(data) else {
+                            return axum::response::Html::from("invalid receipt cache 2".to_owned());
+                        };
+                        let Ok(Some(rec)) = rec.first_obj() else {
+                            return axum::response::Html::from("invalid receipt cache 3".to_owned());
                         };
                         let mut removed = Vec::<String>::new();
                         {
@@ -885,17 +911,22 @@ async fn main() {
                             list.retain_mut(|list_item| {
                                 let lower = list_item.name.to_lowercase();
                                 let len = lower.chars().count();
-                                for item in &rec.items {
+                                for item in rec.get_all::<fields::ReceiptItem>().unwrap_or_default() {
+                                    let Ok(Some(name)) = item.get::<fields::ItemName>() else {
+                                        continue
+                                    };
                                     if if len < 6 {
-                                        item.name.to_lowercase().starts_with(&lower)
+                                        name.to_lowercase().starts_with(&lower)
                                     } else {
-                                        item.name.to_lowercase().contains(&lower)
+                                        name.to_lowercase().contains(&lower)
                                     } {
-                                        list_item.amount -= item.count;
+                                        if let Ok(Some(count)) = item.get::<fields::ItemQuantity>() {
+                                            list_item.amount -= count.f64_approximation();
+                                        }
                                         break;
                                     }
                                 }
-                                let ret = list_item.amount > 0.0001;
+                                let ret = list_item.amount > 0.01;
                                 if !ret {
                                     removed.push(list_item.name.clone());
                                 }
@@ -929,17 +960,18 @@ async fn main() {
                         }
                         let mut tr = Transaction::new(Some(TransactionMeta::Receipt {
                             r#fn: r#fn.clone(),
-                            i: i.clone(),
-                            fp: fp.clone(),
+                            i: i.to_string(),
                             paid,
                         }));
+                        let items = rec.get_all::<fields::ReceiptItem>().unwrap_or_default();
                         for (k, v) in &groups {
-                            let total: u128 = v
+                            let total: u64 = v
                                 .iter()
-                                .filter_map(|x| rec.items.get(*x))
-                                .map(|x| u128::from(x.total))
+                                .filter_map(|x| items.get(*x))
+                                .map(|item| {
+                                    item.get::<fields::ItemTotalPrice>().ok().flatten().unwrap_or_default()
+                                })
                                 .sum();
-                            let total = u64::try_from(total).expect("receipt price too big");
                             for user in k {
                                 if user != username {
                                     tr.pay(
@@ -956,20 +988,35 @@ async fn main() {
                         }
                         tr.finalize();
                         let balance = add_transaction(config, tr).await;
-                        for item in &rec.items {
-                            let mut val = units.entry(item.name.clone()).or_default();
+                        let date = rec.get::<fields::DateTime>().ok().flatten();
+                        for item in &items {
+                            let name = item
+                                .get::<fields::ItemName>()
+                                .ok()
+                                .flatten()
+                                .expect("failed to read item name");
+                            let mut val = units.entry(name).or_default();
                             let val = val.value_mut();
-                            val.unit = item.unit.clone();
-                            if let Ok(date) =
-                                chrono::NaiveDateTime::parse_from_str(&rec.date, "%Y%m%dT%H%M")
+                            if let Some(unit) = item
+                                .get::<fields::Unit>()
+                                .ok()
+                                .flatten()
+                                .filter(|unit| !unit.is_empty())
+                                .or_else(|| {
+                                    item.get::<fields::ItemQuantityUnit>()
+                                        .ok()
+                                        .flatten()
+                                        .map(|x| x.to_string())
+                                })
                             {
+                                val.unit = unit;
+                            }
+                            if let Some(date) = date {
                                 val.last_time = date;
                             }
                             val.count += 1;
                         }
-                        if let Some(fnifp) = rec.fnifp() {
-                            paid_receipts.insert(fnifp);
-                        }
+                        paid_receipts.insert(format!("{fn}_{i:08}"));
                         let mut balance = balance.into_iter().collect::<Vec<_>>();
                         balance.sort_by_key(|(k, _)| {
                             config
@@ -1016,9 +1063,9 @@ async fn main() {
                                 .map(axum_extra::extract::cookie::Cookie::value)
                             {
                                 let mut rec = parse_qr(&q);
-                                if rec.r#fn.is_empty()
-                                    || rec.fp.is_empty()
-                                    || rec.i.is_empty() && q.starts_with("http")
+                                if !rec.contains::<fields::DriveNum>()
+                                    || !rec.contains::<fields::DocNum>()
+                                    || !rec.contains::<fields::DocFiscalSign>() && q.starts_with("http")
                                 {
                                     let q = if q.starts_with("ofd=") {
                                         q.split_once('&').map_or(q.as_str(), |x| x.1)
@@ -1032,71 +1079,101 @@ async fn main() {
                                                 .nth(1)
                                                 .and_then(|x| x.split('<').next())
                                             {
-                                                rec.r#fn = x.to_owned();
+                                                if x.bytes().all(|x| x.is_ascii_digit()) {
+                                                    let _ = rec.set::<fiscal_data::fields::DriveNum>(x.to_owned());
+                                                }
                                             }
                                             if let Some(x) = text
                                                 .split("<div>ФП: <right>")
                                                 .nth(1)
                                                 .and_then(|x| x.split('<').next())
                                             {
-                                                rec.fp = x.to_owned();
+                                                if let Ok(x) = x.parse::<u64>() {
+                                                    let [_, _, a, b, c, d, e, f] = x.to_be_bytes();
+                                                    let _ = rec.set::<fiscal_data::fields::DocFiscalSign>([a, b, c, d, e, f]);
+                                                }
                                             }
                                             if let Some(x) = text
                                                 .split("<div>ФД №: <right>")
                                                 .nth(1)
                                                 .and_then(|x| x.split('<').next())
                                             {
-                                                rec.i = x.to_owned();
+                                                if let Ok(x) = x.parse::<u32>() {
+                                                    let _ = rec.set::<fiscal_data::fields::DocNum>(x);
+                                                }
                                             }
-                                            if rec.n.is_empty() {
-                                                rec.n = "1".to_owned();
+                                            if !rec.contains::<fiscal_data::fields::PaymentType>() {
+                                                let _ = rec.set::<fiscal_data::fields::PaymentType>(PaymentType::Sale);
                                             }
                                             if let Some(x) = text
                                                 .split("<div>Дата Время <right>")
                                                 .nth(1)
                                                 .and_then(|x| x.split('<').next())
+                                                .and_then(|x| chrono::NaiveDateTime::parse_from_str(x, "%d.%m.%Y %H:%M").ok())
                                             {
-                                                // 09.11.2023 18:09 -> 20231109T1809
-                                                let x = x.trim();
-                                                rec.date.clear();
-                                                if let Some((date, time)) = x.split_once(' ') {
-                                                    for x in date.split('.').rev() {
-                                                        rec.date += x;
-                                                    }
-                                                    rec.date += "T";
-                                                    for x in time.split(':').take(2) {
-                                                        rec.date += x;
-                                                    }
-                                                }
+                                                let _ = rec.set::<fields::DateTime>(x);
                                             }
                                         }
                                     }
                                 }
-                                if let Some(fnifp) = rec.fnifp() {
-                                    if let Some(rec) = ofd::fetch(config, rec).await {
-                                        add_t.render(&liquid::object!({
-                                            "total": rec.total,
-                                            "username": username,
-                                            "already_paid": paid_receipts.contains(&fnifp),
-                                            "fn": rec.r#fn,
-                                            "i": rec.i,
-                                            "fp": rec.fp,
-                                            "items": rec.items.iter().enumerate().map(|(i, item)| {
-                                                liquid::object!({
-                                                    "num": i,
-                                                    "name": item.name,
-                                                    "count": item.count,
-                                                    "unit": item.unit,
-                                                    "per_item": item.per_item,
-                                                    "total": item.total,
-                                                })
-                                            }).collect::<Vec<_>>(),
-                                            "usernames": &config.usernames,
-                                        }))
-                                        .unwrap_or_else(|err| format!("Error: {err}"))
-                                    } else {
-                                        log::error!("ofd fetch failed");
-                                        "error".to_owned()
+                                if rec.contains::<fields::DriveNum>()
+                                    && rec.contains::<fields::DocNum>()
+                                    && rec.contains::<fields::DocFiscalSign>() {
+                                    match ofd::fetch(config, rec).await.and_then(|x| x.first_obj()?.ok_or(ofd::Error::MissingData("document"))) {
+                                        Ok(rec) => {
+                                            let r#fn = rec.get::<fields::DriveNum>().ok().flatten().unwrap_or_default();
+                                            let i = rec.get::<fields::DocNum>().ok().flatten().unwrap_or_default();
+                                            add_t.render(&liquid::object!({
+                                                "total": rec.get::<fields::TotalSum>().ok().flatten().unwrap_or_default(),
+                                                "username": username,
+                                                "already_paid": paid_receipts.contains(&format!("{fn}_{i:08}")),
+                                                "fn": r#fn,
+                                                "i": i,
+                                                "items": rec.get_all::<fields::ReceiptItem>().unwrap_or_default().into_iter().enumerate().map(|(i, item)| {
+                                                    liquid::object!({
+                                                        "num": i,
+                                                        "name": item
+                                                            .get::<fields::ItemName>()
+                                                            .ok()
+                                                            .flatten()
+                                                            .unwrap_or_default(),
+                                                        "count": item
+                                                            .get::<fields::ItemQuantity>()
+                                                            .ok()
+                                                            .flatten()
+                                                            .unwrap_or_default(),
+                                                        "unit": item
+                                                            .get::<fields::Unit>()
+                                                            .ok()
+                                                            .flatten()
+                                                            .filter(|unit| !unit.is_empty())
+                                                            .or_else(|| {
+                                                                item.get::<fields::ItemQuantityUnit>()
+                                                                    .ok()
+                                                                    .flatten()
+                                                                    .map(|x| x.to_string())
+                                                            })
+                                                            .unwrap_or_default(),
+                                                        "per_item": item
+                                                            .get::<fields::ItemUnitPrice>()
+                                                            .ok()
+                                                            .flatten()
+                                                            .unwrap_or_default(),
+                                                        "total": item
+                                                            .get::<fields::ItemTotalPrice>()
+                                                            .ok()
+                                                            .flatten()
+                                                            .unwrap_or_default(),
+                                                    })
+                                                }).collect::<Vec<_>>(),
+                                                "usernames": &config.usernames,
+                                            }))
+                                            .unwrap_or_else(|err| format!("Error: {err}"))
+                                        }
+                                        Err(err) => {
+                                            log::error!("ofd fetch failed: {err}");
+                                            format!("error: {err}")
+                                        }
                                     }
                                 } else {
                                     log::error!("missing fn/i/fp");

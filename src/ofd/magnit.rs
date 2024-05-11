@@ -10,6 +10,8 @@ use rslint_parser::{
 
 use crate::{digits, Config, Item, Receipt};
 
+use super::Provider;
+
 #[derive(Clone, Debug)]
 enum ZulValue {
     Null,
@@ -482,6 +484,25 @@ pub(crate) async fn fetch(config: &'static Config, mut rec: Receipt) -> Option<R
         .and_then(|res| stage2(&res, &mut rec))
         .ok()?
         .then_some(rec)
+}
+
+pub struct Magnit;
+impl Provider for Magnit {
+    fn id(&self) -> &'static str {
+        "magnit"
+    }
+    fn name(&self) -> &'static str {
+        "АО \"Тандер\""
+    }
+    fn url(&self) -> &'static str {
+        "ofd-magnit.ru"
+    }
+    fn exts(&self) -> &'static [&'static str] {
+        &["html"]
+    }
+    fn inn(&self) -> &'static str {
+        "2310031475"
+    }
 }
 
 #[cfg(test)]

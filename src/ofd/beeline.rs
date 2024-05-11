@@ -1,5 +1,6 @@
 use crate::{Company, Config, Item, Operation, Receipt};
 use serde::{de::Visitor, Deserialize};
+use super::{NdsType, Provider, PaymentType, ProductType};
 
 #[allow(dead_code)]
 #[repr(u8)]
@@ -15,186 +16,6 @@ enum Format {
 struct Property {
     property_name: String,
     property_value: String,
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, Default, Deserialize, Hash, Eq, PartialEq)]
-#[serde(from = "u8")]
-enum PaymentType {
-    #[default]
-    Unknown = 0,
-    // Предоплата 100%
-    FullPrepaid = 1,
-    // Преодплата
-    Prepaid = 2,
-    // Аванс
-    Advance = 3,
-    // Полный расчет
-    Full = 4,
-    // Частичный расчет и кредит
-    PartialAndCredit = 5,
-    // Передача в кредит
-    Credit = 6,
-    // Оплата кредита
-    PaymentOfCredit = 7,
-}
-
-impl From<u8> for PaymentType {
-    fn from(value: u8) -> Self {
-        match value {
-            1 => Self::FullPrepaid,
-            2 => Self::Prepaid,
-            3 => Self::Advance,
-            4 => Self::Full,
-            5 => Self::PartialAndCredit,
-            6 => Self::Credit,
-            7 => Self::PaymentOfCredit,
-            _ => Self::Unknown,
-        }
-    }
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, Default, Deserialize, Hash, Eq, PartialEq)]
-#[serde(from = "u8")]
-enum ProductType {
-    #[default]
-    Unknown = 0,
-    // Товар
-    Commodity = 1,
-    // Подакцизный товар
-    ExciseTaxCommodity = 2,
-    // Работа
-    Labor = 3,
-    // Услуга
-    Service = 4,
-    // Ставка игры
-    Bet = 5,
-    // Выигрыш азартной игры
-    BetWinnings = 6,
-    // Лотерейный билет
-    LotteryTicket = 7,
-    // Выигрыш лотереи
-    LotteryWinnings = 8,
-    // РИД (Результат интеллектуальной деятельности)
-    NonMaterialGood = 9,
-    // Платеж
-    Payment = 10,
-    // Агентское вознаграждение
-    AgentReward = 11,
-    // Составной предмет расчета
-    CompositePaymentItem = 12,
-    // Иной предмет расчета
-    OtherPaymentItem = 13,
-    // Имущественное право
-    PropertyRight = 14,
-    // Внереализационный доход
-    NonRealizationIncome = 15,
-    // Страховые взносы
-    InsurancePremium = 16,
-    // Торговый сбор - a tax paid by some sellers in some regions
-    SalesFee = 17,
-    // Курортный сбор
-    HotelTax = 18,
-    // Залог
-    Pledge = 19,
-    // Расход
-    Expense = 20,
-    // Взносы на ОПС ИП (обязательное пенсионное страхование)
-    OpsFeeIp = 21,
-    // Взносы на ОПС
-    OpsFee = 22,
-    // Взносы на ОМС ИП (обязательное медицинское страхование)
-    OmsFeeIp = 23,
-    // Взносы на ОМС
-    OmsFee = 24,
-    // Взносы на ОСС
-    OssFee = 25,
-    // Платеж казино
-    CasinoPayment = 26,
-    // ВЫДАЧА ДС
-    Ds = 27,
-    // АТНМ
-    Atnm = 30,
-    // АТМ
-    Atm = 31,
-    // ТНМ
-    Tnm = 32,
-    // ТМ
-    Tm = 33,
-}
-
-impl From<u8> for ProductType {
-    fn from(value: u8) -> Self {
-        match value {
-            1 => Self::Commodity,
-            2 => Self::ExciseTaxCommodity,
-            3 => Self::Labor,
-            4 => Self::Service,
-            5 => Self::Bet,
-            6 => Self::BetWinnings,
-            7 => Self::LotteryTicket,
-            8 => Self::LotteryWinnings,
-            9 => Self::NonMaterialGood,
-            10 => Self::Payment,
-            11 => Self::AgentReward,
-            12 => Self::CompositePaymentItem,
-            13 => Self::OtherPaymentItem,
-            14 => Self::PropertyRight,
-            15 => Self::NonRealizationIncome,
-            16 => Self::InsurancePremium,
-            17 => Self::SalesFee,
-            18 => Self::HotelTax,
-            19 => Self::Pledge,
-            20 => Self::Expense,
-            21 => Self::OpsFeeIp,
-            22 => Self::OpsFee,
-            23 => Self::OmsFeeIp,
-            24 => Self::OmsFee,
-            25 => Self::OssFee,
-            26 => Self::CasinoPayment,
-            27 => Self::Ds,
-            30 => Self::Atnm,
-            31 => Self::Atm,
-            32 => Self::Tnm,
-            33 => Self::Tm,
-            _ => Self::Unknown,
-        }
-    }
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, Default, Deserialize, Hash, Eq, PartialEq)]
-#[serde(from = "u8")]
-enum NdsType {
-    #[default]
-    Unknown = 0,
-    // НДС 20%
-    Nds20 = 1,
-    // НДС 10%
-    Nds10 = 2,
-    // НДС 20/120
-    Nds20120 = 3,
-    // НДС 10/110
-    Nds10110 = 4,
-    // НДС 0
-    Nds0 = 5,
-    // НДС не облагается
-    NoNds = 6,
-}
-
-impl From<u8> for NdsType {
-    fn from(value: u8) -> Self {
-        match value {
-            1 => Self::Nds20,
-            2 => Self::Nds10,
-            3 => Self::Nds20120,
-            4 => Self::Nds10110,
-            5 => Self::Nds0,
-            6 => Self::NoNds,
-            _ => Self::Unknown,
-        }
-    }
 }
 
 #[repr(u8)]
@@ -732,6 +553,25 @@ pub(crate) async fn fetch(config: &'static Config, mut rec: Receipt) -> Option<R
     };
     stage2(res, &mut rec)?;
     Some(rec)
+}
+
+pub struct Beeline;
+impl Provider for Beeline {
+    fn id(&self) -> &'static str {
+        "beeline"
+    }
+    fn name(&self) -> &'static str {
+        "ПАО \"Вымпел-Коммуникации\""
+    }
+    fn url(&self) -> &'static str {
+        "ofd.beeline.ru"
+    }
+    fn exts(&self) -> &'static [&'static str] {
+        &["json"]
+    }
+    fn inn(&self) -> &'static str {
+        "7713076301"
+    }
 }
 
 #[cfg(test)]
