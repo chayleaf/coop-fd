@@ -144,7 +144,11 @@ mod test {
 
     #[test]
     fn test() {
-        for s in [&include_bytes!("../../test_data/private1_1.json")[..], &include_bytes!("../../test_data/private1_2.json")[..]] {
+        for s in [
+            &include_bytes!("../../test_data/private1_1.json")[..],
+            &include_bytes!("../../test_data/private1_2.json")[..],
+            &include_bytes!("../../test_data/private1_3.json")[..],
+        ] {
             tokio_test::block_on(async {
                 super::Private1::new("")
                     .parse(&Config::default(), s, Object::new())

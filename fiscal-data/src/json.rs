@@ -493,6 +493,114 @@ pub mod marking_code_opt {
         de.deserialize_any(Vis)
     }
 }
+pub mod marking_code_base64_opt {
+    use std::fmt;
+
+    use base64::prelude::*;
+    use serde::{
+        de::{Error, IgnoredAny, MapAccess, Visitor},
+        Deserializer, Serializer,
+    };
+
+    fn decode_hex_digit(c: u8) -> Option<u8> {
+        match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'A'..=b'F' => Some(c - b'A' + 10),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            _ => None,
+        }
+    }
+
+    fn decode_hex(s: &str) -> Option<Vec<u8>> {
+        s.as_bytes()
+            .chunks(2)
+            .map(|x| {
+                if let &[a, b] = x {
+                    Some(decode_hex_digit(a)? * 16 + decode_hex_digit(b)?)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    struct Vis;
+    impl<'de> Visitor<'de> for Vis {
+        type Value = Option<Vec<u8>>;
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a marking code or none")
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(Some(
+                BASE64_STANDARD.decode(v).map_err(|err| E::custom(err))?,
+            ))
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            self.visit_str(&v)
+        }
+        fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            self.visit_str(v)
+        }
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserialize(deserializer)
+        }
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut ret = Err(A::Error::missing_field("rawProductCode"));
+            while let Some(k) = map.next_key::<&str>()? {
+                if k == "rawProductCode" {
+                    ret = Ok(decode_hex(map.next_value()?));
+                    continue;
+                }
+                map.next_value::<IgnoredAny>()?;
+            }
+            ret
+        }
+    }
+
+    pub fn deserialize<'de, D>(de: D) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        de.deserialize_any(Vis)
+    }
+    pub fn serialize<S>(x: &Option<Vec<u8>>, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if let Some(x) = x {
+            ser.serialize_some(&BASE64_STANDARD.encode(x))
+        } else {
+            ser.serialize_none()
+        }
+    }
+}
 pub mod bool_num {
     use std::fmt;
 
@@ -1926,7 +2034,7 @@ pub struct Item {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "base64_vec_opt"
+        with = "marking_code_base64_opt"
     )]
     pub product_code: Option<Vec<u8>>,
     #[ffd(tag = fields::ProductCodeNew)]
