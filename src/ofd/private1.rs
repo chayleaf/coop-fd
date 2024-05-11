@@ -144,13 +144,14 @@ mod test {
 
     #[test]
     fn test() {
-        let s = include_bytes!("../../test_data/private1_1.json");
-        tokio_test::block_on(async {
-            super::Private1::new("")
-                .parse(&Config::default(), s, Object::new())
-                .as_mut()
-                .await
-                .unwrap();
-        });
+        for s in [&include_bytes!("../../test_data/private1_1.json")[..], &include_bytes!("../../test_data/private1_2.json")[..]] {
+            tokio_test::block_on(async {
+                super::Private1::new("")
+                    .parse(&Config::default(), s, Object::new())
+                    .as_mut()
+                    .await
+                    .unwrap();
+            });
+        }
     }
 }

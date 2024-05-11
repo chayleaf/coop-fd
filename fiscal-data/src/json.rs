@@ -585,7 +585,7 @@ pub mod bool_num_opt {
     use std::fmt;
 
     use serde::{
-        de::{Error, Visitor},
+        de::{Error, IgnoredAny, SeqAccess, Unexpected, Visitor},
         Deserializer, Serializer,
     };
     struct Vis;
@@ -665,6 +665,20 @@ pub mod bool_num_opt {
             E: Error,
         {
             Ok(Some(v != 0))
+        }
+        // allow a sequence of length 1 for handling some malformed input I've found
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let val = seq
+                .next_element::<u8>()?
+                .ok_or_else(|| A::Error::invalid_value(Unexpected::Seq, &self))?;
+            if seq.next_element::<IgnoredAny>()?.is_some() {
+                Err(A::Error::invalid_value(Unexpected::Seq, &self))
+            } else {
+                self.visit_u8(val)
+            }
         }
     }
     pub fn deserialize<'de, D>(de: D) -> Result<Option<bool>, D::Error>
