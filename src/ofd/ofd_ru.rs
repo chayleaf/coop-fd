@@ -400,7 +400,7 @@ struct Document {
     DiscountMarkup: Option<u64>,
     /// Дополнительные реквизиты пользователя
     #[ffd(tag = fields::AdditionalUserProp)]
-    #[serde(deserialize_with = "fiscal_data::json::one_or_singleton::deserialize")]
+    #[serde(deserialize_with = "fiscal_data::json::one_or_singleton_opt::deserialize")]
     Extra: Option<ExtraProp>,
     /// Номер версии формата фискальных документов / 1209
     #[ffd(tag = fields::FfdVer)]
@@ -432,7 +432,7 @@ struct Document {
     Supplier_Phone: Option<String>,
     /// Сайт налогового органа / 1060
     #[ffd(tag = fields::FnsUrl)]
-    TaxAuthority_Site: String,
+    TaxAuthority_Site: Option<String>,
     /// Дополнительные реквизиты
     AdditionalRequisite: Option<String>,
     /// 1191
@@ -670,6 +670,9 @@ mod test {
     fn test() {
         let test_data = include_bytes!("../../test_data/ofdru1.json");
         let res = serde_json::from_slice::<Res>(test_data).unwrap();
-        assert_eq!(res.document.Items.len(), 5);
+        assert_eq!(res.document.Items.len(), 23);
+        let test_data = include_bytes!("../../test_data/ofdru2.json");
+        let res = serde_json::from_slice::<Res>(test_data).unwrap();
+        assert_eq!(res.document.Items.len(), 3);
     }
 }

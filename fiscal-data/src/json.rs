@@ -108,7 +108,7 @@ pub mod one_or_many {
     }
 }
 
-pub mod one_or_singleton {
+pub mod one_or_singleton_opt {
     use std::{fmt, marker::PhantomData};
 
     use serde::{
@@ -123,6 +123,24 @@ pub mod one_or_singleton {
         type Value = Option<T>;
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a single object or none")
+        }
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(None)
+        }
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserialize(deserializer)
+        }
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            Ok(None)
         }
         fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
         where
@@ -1800,7 +1818,7 @@ pub struct ReceiptBso<const T: u16> {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "one_or_singleton::deserialize"
+        deserialize_with = "one_or_singleton_opt::deserialize"
     )]
     pub properties: Option<Property>,
     #[ffd(tag = fields::IndustryReceiptProp)]
@@ -2300,7 +2318,7 @@ pub struct ReceiptBsoCorrection<const T: u16> {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "one_or_singleton::deserialize"
+        deserialize_with = "one_or_singleton_opt::deserialize"
     )]
     pub properties: Option<Property>,
     #[ffd(tag = fields::IndustryReceiptProp)]
