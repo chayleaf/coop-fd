@@ -1,7 +1,5 @@
 {
-  # internet is super slow for me right now, so I'm using the branch I have extensively cached
-  #inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.11";
-  inputs.nixpkgs.url = "github:chayleaf/nixpkgs/e70edbbc30bca7d90c4a1e8c653ceb1607cc2858";
+  inputs.nixpkgs.url = "github:chayleaf/nixpkgs";
   inputs.crane.url = "github:ipetkov/crane";
   inputs.crane.inputs.nixpkgs.follows = "nixpkgs";
   inputs.flake-compat = {
