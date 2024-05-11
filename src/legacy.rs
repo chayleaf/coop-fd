@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::{
     ofd::{self, registry},
-    Config, ReceiptFormatVersion, QR_DATE_FORMAT,
+    Config, ReceiptFormatVersion,
 };
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, Eq, PartialEq)]
@@ -100,10 +100,8 @@ pub async fn migrate_json_to_ffd(config: &Config) {
                 continue;
             };
             let mut rec = Object::new();
-            rec.set::<fiscal_data::fields::DateTime>(
-                chrono::NaiveDateTime::parse_from_str(&old.date, QR_DATE_FORMAT).unwrap(),
-            )
-            .unwrap();
+            rec.set::<fiscal_data::fields::DateTime>(super::parse_qr_date(&old.date).unwrap())
+                .unwrap();
             rec.set::<fields::TotalSum>(old.total).unwrap();
             rec.set::<fields::DriveNum>(r#fn.to_owned()).unwrap();
             rec.set::<fields::PaymentType>(enums::PaymentType::Sale)

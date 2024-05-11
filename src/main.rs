@@ -16,7 +16,13 @@ use tokio::sync::{mpsc, OnceCell, RwLock};
 mod legacy;
 mod ofd;
 
-const QR_DATE_FORMAT: &str = "%Y%m%dT%H%M";
+const QR_DATE_FORMAT1: &str = "%Y%m%dT%H%M";
+const QR_DATE_FORMAT2: &str = "%Y%m%dT%H%M%S";
+
+fn parse_qr_date(s: &str) -> Result<chrono::NaiveDateTime, chrono::ParseError> {
+    chrono::NaiveDateTime::parse_from_str(s, QR_DATE_FORMAT1)
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, QR_DATE_FORMAT2))
+}
 
 fn parse_qr(s: &str) -> fiscal_data::Object {
     let mut ret = fiscal_data::Object::new();
@@ -26,7 +32,7 @@ fn parse_qr(s: &str) -> fiscal_data::Object {
                 let _ = ofd::registry().fill(v, &mut ret);
             }
             "t" => {
-                if let Ok(x) = chrono::NaiveDateTime::parse_from_str(v, QR_DATE_FORMAT) {
+                if let Ok(x) = parse_qr_date(v) {
                     let _ = ret.set::<fiscal_data::fields::DateTime>(x);
                 }
             }
@@ -601,7 +607,6 @@ async fn main() {
                 .unwrap();
         }
     });
-
 
     let app = axum::Router::new()
         .route(

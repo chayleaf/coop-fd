@@ -548,7 +548,6 @@ impl TlvType for Vec<u8> {
 impl TlvType for VarFloat {
     fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
         let mut ret = VarFloat::new();
-        eprintln!("reading float");
         ret.dot_offset = bytes.first().copied().ok_or(Error::Eof)?;
         let mut x = [0u8; mem::size_of::<u64>()];
         if bytes.len() > mem::size_of::<u64>() + 1 {
@@ -674,16 +673,13 @@ impl TlvType for Object {
         let len = bytes.len();
         let mut cursor = io::Cursor::new(bytes);
         while cursor.position() != len as u64 {
-            eprintln!("{len} reading tag");
             let mut tag = [0u8, 0u8];
             cursor.read_exact(&mut tag).map_err(|_| Error::Eof)?;
             let tag = u16::from_le_bytes(tag);
-            eprintln!("{len} reading len (tag={tag})");
             let mut len = [0u8, 0u8];
             cursor.read_exact(&mut len).map_err(|_| Error::Eof)?;
             let len = u16::from_le_bytes(len);
             let mut buf = vec![0u8; len.into()];
-            eprintln!("reading buf (len={len}, pos={})", cursor.position());
             cursor.read_exact(&mut buf).map_err(|_| Error::Eof)?;
             ret.0.entry(tag).or_default().push(buf);
             // HACK: if a tag is small, this is probably a document
