@@ -64,6 +64,10 @@
                 type = lib.types.str;
                 default = "Europe/Moscow";
               };
+              options.private1_endpoint = lib.mkOption {
+                type = with lib.types; nullOr str;
+                default = null;
+              };
             };
           };
         };
