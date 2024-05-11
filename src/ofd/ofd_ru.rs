@@ -308,7 +308,7 @@ struct Document {
     Document_Number: u64,
     /// Фискальный признак документа / 1077
     #[ffd(tag = fields::DocFiscalSign)]
-    #[serde(with = "fiscal_data::json::base64_array_opt")]
+    #[serde(with = "fiscal_data::json::base64_array")]
     FiscalSign: [u8; 6],
     /// Фискальный признак документа
     DecimalFiscalSign: String,
@@ -515,7 +515,6 @@ struct Coordinates {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
-#[serde_as]
 struct Res {
     /// Версия сериализации документа
     version: u32,
@@ -536,8 +535,8 @@ struct Res {
     /// Дата и время формирования документа по данным кассы (yyyy-MM-ddThh:mm:ss)
     doc_date_time: chrono::NaiveDateTime,
     /// Фискальный признак документа / 1077
-    #[serde_as(as = "Base64")]
-    doc_fiscal_sign: Vec<u8>,
+    #[serde(with = "fiscal_data::json::base64_array")]
+    doc_fiscal_sign: [u8; 6],
     decimal_fiscal_sign: String,
     /// Дата и время приема документа в информационную систему (UTC, yyyy-MM-ddThh:mm:ss)
     c_date_utc: chrono::NaiveDateTime,
@@ -618,12 +617,9 @@ impl Provider for OfdRu {
             .to_vec();
         #[cfg(not(debug_assertions))]
         {
-            let Ok(res) = serde_json::from_slice::<Res>(&ret) else {
+            let Ok(_) = serde_json::from_slice::<Res>(&ret) else {
                 return Err(Error::ParseError);
             };
-            if !res.has_result {
-                return Err(Error::NoResponse);
-            }
         }
         rec.set::<super::custom::Id>(id.to_owned())?;
         if let Some(auto) = super::registry().by_id("") {

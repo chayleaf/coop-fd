@@ -74,7 +74,7 @@ impl Provider for Private1 {
         let ret = reqwest::get(url).await?.bytes().await?.to_vec();
         #[cfg(not(debug_assertions))]
         {
-            let Ok(res) = serde_json::from_slice::<Res<serde_json::Value>>(data) else {
+            let Ok(res) = serde_json::from_slice::<Res<serde_json::Value>>(&ret) else {
                 return Err(Error::ParseError);
             };
             if !res.status {
