@@ -26,3 +26,6 @@ uuid = { version = "1.6.1", features = ["v4"] }
 fiscal-data = { path = "./fiscal-data" }
 thiserror = "1.0.60"
 async-trait = "0.1.80"
+
+[dev-dependencies]
+tokio-test = "0.4.4"

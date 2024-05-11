@@ -135,3 +135,22 @@ impl Provider for Private1 {
         })
     }
 }
+
+#[cfg(test)]
+mod test {
+    use fiscal_data::Object;
+
+    use crate::{ofd::Provider, Config};
+
+    #[test]
+    fn test() {
+        let s = include_bytes!("../../test_data/private1_1.json");
+        tokio_test::block_on(async {
+            super::Private1::new("")
+                .parse(&Config::default(), s, Object::new())
+                .as_mut()
+                .await
+                .unwrap();
+        });
+    }
+}

@@ -474,13 +474,15 @@ pub mod marking_code_opt {
         where
             A: MapAccess<'de>,
         {
+            let mut ret = Err(A::Error::missing_field("rawProductCode"));
             while let Some(k) = map.next_key::<&str>()? {
                 if k == "rawProductCode" {
-                    return Ok(Some(map.next_value()?));
+                    ret = Ok(map.next_value()?);
+                    continue;
                 }
                 map.next_value::<IgnoredAny>()?;
             }
-            Err(A::Error::missing_field("rawProductCode"))
+            ret
         }
     }
 
