@@ -62,7 +62,6 @@ impl From<std::convert::Infallible> for Error {
 // for [u8; N]: TryFrom<Vec<u8>>
 impl From<Vec<u8>> for Error {
     fn from(_: Vec<u8>) -> Self {
-        eprintln!("fromvec");
         Self::InvalidLength
     }
 }
@@ -701,10 +700,7 @@ impl TlvType for Object {
 }
 impl TlvType for [u8; 6] {
     fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
-        bytes.try_into().map_err(|_| {
-            eprintln!("u86");
-            Error::InvalidLength
-        })
+        bytes.try_into().map_err(|_| Error::InvalidLength)
     }
     fn into_bytes(self) -> Result<Vec<u8>> {
         Ok(self.to_vec())
@@ -741,7 +737,6 @@ pub mod internal {
         } {
             Ok(F::Type::from_bytes(data)?)
         } else {
-            eprintln!("padding");
             Err(Error::InvalidLength)
         }
     }
@@ -763,7 +758,6 @@ pub mod internal {
         } {
             Ok(ret)
         } else {
-            eprintln!("padding2 {} {:?}", F::TAG, ret);
             Err(Error::InvalidLength)
         }
     }
