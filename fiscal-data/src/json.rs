@@ -1833,6 +1833,13 @@ pub struct ReceiptBso<const T: u16> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "operationalDetails")]
     pub operational_details: Option<OperationalDetails>,
+    /// Undocumented region code (e.g. 77)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    /// Purpose unknown
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    // yes, this is snake case
+    pub redefine_mask: Option<u32>,
 }
 
 pub type Receipt = ReceiptBso<3>;
