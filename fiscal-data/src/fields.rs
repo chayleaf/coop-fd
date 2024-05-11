@@ -587,7 +587,7 @@ impl FieldInternal for ShiftNum {
 pub enum Reserved {}
 #[allow(deprecated)]
 impl FieldInternal for Reserved {
-    const PADDING: Padding = Padding::Fixed { length: 12 };
+    const PADDING: Padding = Padding::None { length: Some(12) };
     const TAG: u16 = 1039;
     type Type = String;
 }
@@ -785,7 +785,7 @@ impl FieldInternal for PaymentType {
 /// Система налогообложения, применяемая пользователем при расчете с покупателем (клиентом)
 pub enum TaxType {}
 impl FieldInternal for TaxType {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'0' };
     const TAG: u16 = 1055;
     const JSON_NAME: Option<JsonName<'static>> = json_name("appliedTaxationType");
     type Type = enums::TaxationTypes;
@@ -810,7 +810,7 @@ impl FieldInternal for EncryptionFlag {
 /// Признак проведения расчетов (возможности проведения расчетов) пользователем, являющимся агентом, указанным в таблице7
 pub enum PaymentAgentTypes {}
 impl FieldInternal for PaymentAgentTypes {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'\0' };
     const TAG: u16 = 1057;
     type Type = enums::AgentTypes;
 }
@@ -820,7 +820,7 @@ impl FieldInternal for PaymentAgentTypes {
 pub enum BankAgentTypes {}
 #[allow(deprecated)]
 impl FieldInternal for BankAgentTypes {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'\0' };
     const TAG: u16 = 1058;
     type Type = u8;
 }
@@ -2079,7 +2079,7 @@ impl FieldInternal for OperatorInn {
 /// Коды причин изменения сведений о ККТ
 pub enum KktInfoUpdateReason {}
 impl FieldInternal for KktInfoUpdateReason {
-    const PADDING: Padding = Padding::Fixed { length: 4 };
+    const PADDING: Padding = Padding::Right { length: 4, padding: b'\0' };
     const TAG: u16 = 1205;
     const JSON_NAME: Option<JsonName<'static>> = json_name("correctionKktReasonCode");
     type Type = enums::KktInfoUpdateReasons;
@@ -2090,7 +2090,7 @@ impl FieldInternal for KktInfoUpdateReason {
 /// Код информационного сообщения оператора фискальных данных
 pub enum OperatorMessage {}
 impl FieldInternal for OperatorMessage {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'\0' };
     const TAG: u16 = 1206;
     const JSON_NAME: Option<JsonName<'static>> = json_name("operatorMessage");
     type Type = enums::OperatorMessages;
@@ -2262,7 +2262,7 @@ impl FieldInternal for PrinterFlag {
 /// Признак агента по предмету расчета
 pub enum ItemAgentTypes {}
 impl FieldInternal for ItemAgentTypes {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'\0' };
     const TAG: u16 = 1222;
     const JSON_NAME: Option<JsonName<'static>> = json_name("paymentAgentByProductType");
     type Type = enums::AgentTypes;
@@ -2703,7 +2703,7 @@ impl FieldInternal for CloseArchiveAdditionalData {
 /// См. таблицу 103
 pub enum KktUsageFlags {}
 impl FieldInternal for KktUsageFlags {
-    const PADDING: Padding = Padding::Fixed { length: 4 };
+    const PADDING: Padding = Padding::Right { length: 4, padding: b'\0' };
     const TAG: u16 = 1290;
     const JSON_NAME: Option<JsonName<'static>> = json_name("usageConditionSigns");
     type Type = enums::KktUsage;
@@ -2944,7 +2944,7 @@ impl FieldInternal for MarkingCode {
 /// Порядковый номер запроса о коде маркировки
 pub enum RequestNumber {}
 impl FieldInternal for RequestNumber {
-    const PADDING: Padding = Padding::Fixed { length: 4 };
+    const PADDING: Padding = Padding::Right { length: 4, padding: b'\0' };
     const TAG: u16 = 2001;
     type Type = u32;
 }
@@ -2954,7 +2954,7 @@ impl FieldInternal for RequestNumber {
 /// Порядковый номер уведомления о реализации товара, подлежащего обязательной маркировке средством идентификации
 pub enum NotificationNumber {}
 impl FieldInternal for NotificationNumber {
-    const PADDING: Padding = Padding::Fixed { length: 4 };
+    const PADDING: Padding = Padding::Right { length: 4, padding: b'\0' };
     const TAG: u16 = 2002;
     type Type = u32;
 }
@@ -2977,7 +2977,7 @@ impl FieldInternal for PlannedProductStatus {
 /// Результат проверки КП КМ
 pub enum KmCheckResult {}
 impl FieldInternal for KmCheckResult {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'\0' };
     const TAG: u16 = 2004;
     type Type = enums::MarkingCheckResult;
 }
@@ -2987,7 +2987,7 @@ impl FieldInternal for KmCheckResult {
 /// Результаты обработки запроса о коде маркировки ОИСМ
 pub enum RequestProcessingResults {}
 impl FieldInternal for RequestProcessingResults {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'\0' };
     const TAG: u16 = 2005;
     type Type = enums::MarkingCheckResult;
 }
@@ -3085,7 +3085,7 @@ impl FieldInternal for RequestProcessingCodes {
 /// Результаты проверки кода проверки кода маркировки и проверки сведений о товаре, подлежащем обязательной маркировке средством идентификации, содержащихся у ОИСМ, выполненные для товара, подлежащего обязательной маркировке средством идентификации
 pub enum ProductInfoCheckResult {}
 impl FieldInternal for ProductInfoCheckResult {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'\0' };
     const TAG: u16 = 2106;
     const JSON_NAME: Option<JsonName<'static>> = json_name("checkingProdInformationResult");
     type Type = enums::MarkingCheckResult;
@@ -3164,7 +3164,7 @@ impl FieldInternal for NotificationProcessingCodes {
 /// Признак некорректных кодов маркировки
 pub enum IncorrectMarkingCodesFlags {}
 impl FieldInternal for IncorrectMarkingCodesFlags {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'\0' };
     const TAG: u16 = 2112;
     type Type = enums::IncorrectMarkingCodeFlags;
 }
@@ -3174,7 +3174,7 @@ impl FieldInternal for IncorrectMarkingCodesFlags {
 /// Признак некорректных запросов и уведомлений
 pub enum IncorrectRequestsAndNotificationsFlags {}
 impl FieldInternal for IncorrectRequestsAndNotificationsFlags {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'\0' };
     const TAG: u16 = 2113;
     type Type = enums::IncorrectDataFlags;
 }
@@ -3205,7 +3205,7 @@ impl FieldInternal for MarkingCodeControlCode {
 /// Вид операции, послуживший основанием для формирования ФД
 pub enum OperationType {}
 impl FieldInternal for OperationType {
-    const PADDING: Padding = Padding::Fixed { length: 1 };
+    const PADDING: Padding = Padding::Right { length: 1, padding: b'\0' };
     const TAG: u16 = 2116;
     type Type = enums::OperationType;
 }
