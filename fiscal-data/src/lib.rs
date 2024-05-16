@@ -16,7 +16,7 @@ use serde::{
 };
 use thiserror::Error;
 
-pub use fiscal_data_derive::Ffd;
+pub use fiscal_data_derive::{Ffd, FfdDoc};
 pub mod enums;
 pub mod fields;
 pub mod json;
@@ -377,17 +377,11 @@ impl<'de> Deserialize<'de> for VarFloat {
 type Data = Vec<u8>;
 
 #[derive(Clone, Default)]
-pub struct Object(BTreeMap<u16, Vec<Data>>, Vec<u8>);
+pub struct Object(BTreeMap<u16, Vec<Data>>);
 
 impl Object {
     pub fn new() -> Self {
         Self::default()
-    }
-    pub fn trailer(&self) -> &[u8] {
-        &self.1
-    }
-    pub fn set_trailer(&mut self, trailer: &[u8]) {
-        self.1 = trailer.to_vec();
     }
     fn serialize_into(&self, out: &mut impl io::Write) -> Result<()> {
         for (k, v) in &self.0 {
@@ -401,7 +395,6 @@ impl Object {
                 out.write_all(x)?;
             }
         }
-        out.write_all(&self.1)?;
         Ok(())
     }
     pub fn remove<F: Field>(&mut self) -> bool {
@@ -417,16 +410,6 @@ impl Object {
             .or_default()
             .push(internal::into_data::<F>(x)?);
         Ok(())
-    }
-    pub fn first_obj(&self) -> Result<Option<Object>> {
-        for (k, v) in self.0.iter() {
-            if matches!(fields::all_reprs().get(k), Some(Repr::Object)) {
-                if let Some(x) = v.first() {
-                    return Some(Object::from_bytes(x.clone())).transpose();
-                }
-            }
-        }
-        Ok(None)
     }
     pub fn contains<F: Field>(&self) -> bool {
         self.0
@@ -466,6 +449,135 @@ impl PartialEq for Object {
     fn eq(&self, other: &Self) -> bool {
         format!("{self:?}") == format!("{other:?}")
     }
+}
+
+#[derive(Clone, Default, PartialEq)]
+pub struct Document {
+    tag: u16,
+    data: Object,
+    container_header: Option<Vec<u8>>,
+    message_fiscal_sign: Option<[u8; 8]>,
+}
+
+impl Document {
+    pub fn new(tag: u16) -> Self {
+        Self {
+            tag,
+            data: Object::default(),
+            message_fiscal_sign: None,
+            container_header: None,
+        }
+    }
+    pub fn with_data(tag: u16, data: Object) -> Self {
+        Self {
+            tag,
+            data,
+            container_header: None,
+            message_fiscal_sign: None,
+        }
+    }
+    pub fn tag(&self) -> u16 {
+        self.tag
+    }
+    pub fn set_tag(&mut self, tag: u16) {
+        self.tag = tag;
+    }
+    pub fn into_data(self) -> Object {
+        self.data
+    }
+    pub fn data(&self) -> &Object {
+        &self.data
+    }
+    pub fn data_mut(&mut self) -> &mut Object {
+        &mut self.data
+    }
+    pub fn message_fiscal_sign(&self) -> Option<[u8; 8]> {
+        self.message_fiscal_sign
+    }
+    pub fn remove_message_fiscal_sign(&mut self) {
+        self.message_fiscal_sign = None;
+    }
+    pub fn set_message_fiscal_sign(&mut self, message_fiscal_sign: [u8; 8]) {
+        self.message_fiscal_sign = Some(message_fiscal_sign);
+    }
+    pub fn container_header(&self) -> Option<&[u8]> {
+        self.container_header.as_deref()
+    }
+    pub fn remove_container_header(&mut self) {
+        self.container_header = None;
+    }
+    pub fn set_container_header(&mut self, header: Vec<u8>) -> Result<()> {
+        if header.len() <= 65535 {
+            self.container_header = Some(header);
+            Ok(())
+        } else {
+            Err(Error::InvalidLength)
+        }
+    }
+    fn serialize_into(&self, out: &mut impl io::Write) -> Result<()> {
+        let data_len: usize = self
+            .data
+            .0
+            .values()
+            .map(|v| v.iter().map(|x| 4 + x.len()).sum::<usize>())
+            .sum();
+        let data_len = u16::try_from(data_len)?;
+        if let Some(header) = &self.container_header {
+            let len = u16::try_from(header.len())?;
+            out.write_all(b"\xff\xff")?;
+            out.write_all(&len.to_be_bytes())?;
+            out.write_all(header)?;
+        }
+        out.write_all(&self.tag.to_le_bytes())?;
+        out.write_all(&data_len.to_le_bytes())?;
+        self.data.serialize_into(out)?;
+        if let Some(trailer) = self.message_fiscal_sign {
+            out.write_all(&trailer)?;
+        }
+        Ok(())
+    }
+}
+
+impl TlvType for Document {
+    fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
+        let mut cursor = io::Cursor::new(bytes);
+        let mut tag = [0u8, 0u8];
+        cursor.read_exact(&mut tag).map_err(|_| Error::Eof)?;
+        let tag = u16::from_le_bytes(tag);
+        let (container_header, tag) = if tag != 0xFFFF {
+            (None, tag)
+        } else {
+            let mut len = [0u8, 0u8];
+            cursor.read_exact(&mut len).map_err(|_| Error::Eof)?;
+            let len = u16::from_be_bytes(len);
+            let mut buf = vec![0u8; len.into()];
+            cursor.read_exact(&mut buf).map_err(|_| Error::Eof)?;
+            let mut tag = [0u8, 0u8];
+            cursor.read_exact(&mut tag).map_err(|_| Error::Eof)?;
+            (Some(buf), u16::from_le_bytes(tag))
+        };
+        let mut len = [0u8, 0u8];
+        cursor.read_exact(&mut len).map_err(|_| Error::Eof)?;
+        let len = u16::from_le_bytes(len);
+        let mut buf = vec![0u8; len.into()];
+        cursor.read_exact(&mut buf).map_err(|_| Error::Eof)?;
+        let mut ret = Self::with_data(tag, Object::from_bytes(buf)?);
+        if let Some(header) = container_header {
+            ret.set_container_header(header)?;
+        }
+        let mut buf = vec![];
+        cursor.read_to_end(&mut buf).map_err(|_| Error::Eof)?;
+        if !buf.is_empty() {
+            ret.set_message_fiscal_sign(buf.try_into()?);
+        }
+        Ok(ret)
+    }
+    fn into_bytes(self) -> Result<Vec<u8>> {
+        let mut ret = vec![];
+        self.serialize_into(&mut ret)?;
+        Ok(ret)
+    }
+    const REPR: Repr = Repr::Document;
 }
 
 struct DebugHelper<'a>(&'a [u8], Repr);
@@ -517,6 +629,59 @@ impl<'a> fmt::Debug for DebugHelper<'a> {
                 }
                 map.finish()
             }
+            Repr::Document => {
+                let mut r = self.0;
+                let mut r = io::Cursor::new(&mut r);
+                let mut map = f.debug_map();
+                let mut tag = [0u8, 0u8];
+                if r.read_exact(&mut tag).is_err() {
+                    return f.write_str("<missing tag 1>");
+                }
+                let tag = u16::from_le_bytes(tag);
+                let tag = if tag != 0xFFFF {
+                    tag
+                } else {
+                    let mut len = [0u8, 0u8];
+                    if r.read_exact(&mut len).is_err() {
+                        map.key(&"header");
+                        return f.write_str("<missing header length>");
+                    }
+                    let len = u16::from_be_bytes(len);
+                    let mut buf = vec![0u8; len.into()];
+                    if r.read_exact(&mut buf).is_err() {
+                        map.key(&"header");
+                        return f.write_str("<missing header>");
+                    }
+                    let mut tag = [0u8, 0u8];
+                    if r.read_exact(&mut tag).is_err() {
+                        return f.write_str("<missing tag 2>");
+                    }
+                    let tag = u16::from_le_bytes(tag);
+                    map.key(&"header");
+                    map.value(&buf);
+                    tag
+                };
+                map.key(&"tag");
+                map.value(&tag);
+                map.key(&"data");
+                let mut len = [0u8, 0u8];
+                if r.read_exact(&mut len).is_err() {
+                    return f.write_str("<missing length>");
+                }
+                let len = u16::from_le_bytes(len);
+                let mut buf = vec![0u8; len.into()];
+                if r.read_exact(&mut buf).is_err() {
+                    map.key(&tag);
+                    return f.write_str("<missing value>");
+                }
+                map.value(&DebugHelper(&buf, Repr::Object));
+                buf.clear();
+                if r.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                    map.key(&"footer");
+                    map.value(&buf);
+                }
+                map.finish()
+            }
         }
     }
 }
@@ -531,6 +696,25 @@ impl fmt::Debug for Object {
                     &DebugHelper(v, fields::all_reprs().get(k).copied().unwrap_or_default()),
                 );
             }
+        }
+        map.finish()
+    }
+}
+
+impl fmt::Debug for Document {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut map = f.debug_map();
+        if let Some(header) = &self.container_header {
+            map.key(&"header");
+            map.value(header);
+        }
+        map.key(&"tag");
+        map.value(&self.tag);
+        map.key(&"data");
+        map.value(&self.data);
+        if let Some(footer) = &self.message_fiscal_sign {
+            map.key(&"footer");
+            map.value(footer);
         }
         map.finish()
     }
@@ -682,13 +866,7 @@ impl TlvType for Object {
             let mut buf = vec![0u8; len.into()];
             cursor.read_exact(&mut buf).map_err(|_| Error::Eof)?;
             ret.0.entry(tag).or_default().push(buf);
-            // HACK: if a tag is small, this is probably a document
-            // if there's any more data, it's probably the message fiscal sign
-            if tag < 100 {
-                break;
-            }
         }
-        cursor.read_to_end(&mut ret.1).map_err(|_| Error::Eof)?;
         Ok(ret)
     }
     fn into_bytes(self) -> Result<Vec<u8>> {
@@ -771,6 +949,7 @@ pub mod internal {
         Int,
         String,
         Object,
+        Document,
     }
 
     pub enum Padding {
@@ -957,14 +1136,14 @@ mod tests {
             .set::<fields::FfdVer>(enums::FfdVersion::V1_05)
             .unwrap();
         report.set::<fields::PrinterFlag>(false).unwrap();
-        let mut x = Object::new();
-        x.set::<fields::RegistrationParamUpdateReport>(report)
-            .unwrap();
+        let x = Document::with_data(fields::RegistrationParamUpdateReport::TAG, report);
         // different order
         let data = b"\x0b\x00\x86\x01\x11\x04\x10\x009999078900005488\r\x04\x14\x000000000005008570    \xfa\x03\x0c\x007702203276  \x10\x04\x04\x00\x01\x00\x00\x00\xf4\x03\x04\x00\x98U\xb9X5\x04\x06\x00!\x04\xaa\x10uA \x04\x01\x00\x00\xea\x03\x01\x00\x00\xe9\x03\x01\x00\x00U\x04\x01\x00\x01V\x04\x01\x00\x00T\x04\x01\x00\x00&\x04\x01\x00\x06M\x04\x01\x00\x01\xf5\x03\x0c\x00000000000002\x18\x04\x11\x00\x8e\x8e\x8e \x90\x80\x8f\x8a\x80\x92-\xe6\xa5\xad\xe2\xe0 \xf1\x030\x00111141 \xa3.\x8c\xae\xe1\xaa\xa2\xa0, \xe3\xab. \x8a\xe3\xe1\xaa\xae\xa2\xe1\xaa\xa0\xef \xa4.20\x80 \xae\xe4\xa8\xe1 \x82-202\xf9\x03\x0c\x007704358518  $\x04\x08\x00nalog.ru]\x04\x13\x00example@example.com\xfd\x03\n\x00\x98\xa5\xad\xad\xae\xad \x8a. \x16\x04\n\x00OOO TAXCOM\xa5\x04\x01\x00\x02\xb9\x04\x01\x00\x02\xa4\x04\x03\x002.0\xa3\x041\x00111141 \xa3.\x8c\xae\xe1\xaa\xa2\xa0, \xe3\xab. \x8a\xe3\xe1\xaa\xae\xa2\xe1\xaa\xa0\xef\r\n\xa4.20\x80 \xae\xe4\xa8\xe1 \x82-202\xb3\x04\x0c\x00771234567890\xc5\x04\x01\x00\x00\xb7\x04\x01\x00\x01";
-        let obj = Object::from_bytes(data.into()).unwrap();
+        let data2 = b"\x0b\x00\x86\x01\xe9\x03\x01\x00\x00\xea\x03\x01\x00\x00\xf1\x030\x00111141 \xa3.\x8c\xae\xe1\xaa\xa2\xa0, \xe3\xab. \x8a\xe3\xe1\xaa\xae\xa2\xe1\xaa\xa0\xef \xa4.20\x80 \xae\xe4\xa8\xe1 \x82-202\xf4\x03\x04\x00\x98U\xb9X\xf5\x03\x0c\x00000000000002\xf9\x03\x0c\x007704358518  \xfa\x03\x0c\x007702203276  \xfd\x03\n\x00\x98\xa5\xad\xad\xae\xad \x8a. \r\x04\x14\x000000000005008570    \x10\x04\x04\x00\x01\x00\x00\x00\x11\x04\x10\x009999078900005488\x16\x04\n\x00OOO TAXCOM\x18\x04\x11\x00\x8e\x8e\x8e \x90\x80\x8f\x8a\x80\x92-\xe6\xa5\xad\xe2\xe0  \x04\x01\x00\x00$\x04\x08\x00nalog.ru&\x04\x01\x00\x065\x04\x06\x00!\x04\xaa\x10uAM\x04\x01\x00\x01T\x04\x01\x00\x00U\x04\x01\x00\x01V\x04\x01\x00\x00]\x04\x13\x00example@example.com\xa3\x041\x00111141 \xa3.\x8c\xae\xe1\xaa\xa2\xa0, \xe3\xab. \x8a\xe3\xe1\xaa\xae\xa2\xe1\xaa\xa0\xef\r\n\xa4.20\x80 \xae\xe4\xa8\xe1 \x82-202\xa4\x04\x03\x002.0\xa5\x04\x01\x00\x02\xb3\x04\x0c\x00771234567890\xb7\x04\x01\x00\x01\xb9\x04\x01\x00\x02\xc5\x04\x01\x00\x00";
+        let obj = Document::from_bytes(data.into()).unwrap();
         assert_eq!(obj, x);
-        round_trip::<fields::ReceiptItem>(x, b"\x0b\x00\x86\x01\xe9\x03\x01\x00\x00\xea\x03\x01\x00\x00\xf1\x030\x00111141 \xa3.\x8c\xae\xe1\xaa\xa2\xa0, \xe3\xab. \x8a\xe3\xe1\xaa\xae\xa2\xe1\xaa\xa0\xef \xa4.20\x80 \xae\xe4\xa8\xe1 \x82-202\xf4\x03\x04\x00\x98U\xb9X\xf5\x03\x0c\x00000000000002\xf9\x03\x0c\x007704358518  \xfa\x03\x0c\x007702203276  \xfd\x03\n\x00\x98\xa5\xad\xad\xae\xad \x8a. \r\x04\x14\x000000000005008570    \x10\x04\x04\x00\x01\x00\x00\x00\x11\x04\x10\x009999078900005488\x16\x04\n\x00OOO TAXCOM\x18\x04\x11\x00\x8e\x8e\x8e \x90\x80\x8f\x8a\x80\x92-\xe6\xa5\xad\xe2\xe0  \x04\x01\x00\x00$\x04\x08\x00nalog.ru&\x04\x01\x00\x065\x04\x06\x00!\x04\xaa\x10uAM\x04\x01\x00\x01T\x04\x01\x00\x00U\x04\x01\x00\x01V\x04\x01\x00\x00]\x04\x13\x00example@example.com\xa3\x041\x00111141 \xa3.\x8c\xae\xe1\xaa\xa2\xa0, \xe3\xab. \x8a\xe3\xe1\xaa\xae\xa2\xe1\xaa\xa0\xef\r\n\xa4.20\x80 \xae\xe4\xa8\xe1 \x82-202\xa4\x04\x03\x002.0\xa5\x04\x01\x00\x02\xb3\x04\x0c\x00771234567890\xb7\x04\x01\x00\x01\xb9\x04\x01\x00\x02\xc5\x04\x01\x00\x00");
+        assert_eq!(x.clone().into_bytes().unwrap(), data2.to_vec());
+        assert_eq!(Document::from_bytes(data2.into()).unwrap(), x);
     }
 
     #[test]

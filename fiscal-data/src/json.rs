@@ -1,6 +1,6 @@
 use std::fmt;
 
-use fiscal_data_derive::Ffd;
+use fiscal_data_derive::{Ffd, FfdDoc};
 use serde::{
     de::{Unexpected, Visitor},
     Deserialize, Deserializer, Serialize,
@@ -806,6 +806,53 @@ pub mod bool_num_opt {
         }
     }
 }
+pub mod base64_vec {
+    use base64::prelude::*;
+    use std::fmt;
+
+    use serde::{
+        de::{Error, Visitor},
+        ser::Serialize,
+        Deserializer, Serializer,
+    };
+    struct Vis;
+    impl<'de> Visitor<'de> for Vis {
+        type Value = Vec<u8>;
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a base64 string")
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_str(&v)
+        }
+        fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_str(v)
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            BASE64_STANDARD.decode(v).map_err(|err| E::custom(err))
+        }
+    }
+    pub fn deserialize<'de, D>(de: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        de.deserialize_str(Vis)
+    }
+    pub fn serialize<S>(x: &Vec<u8>, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        BASE64_STANDARD.encode(x).serialize(ser)
+    }
+}
 pub mod base64_vec_opt {
     use base64::prelude::*;
     use std::fmt;
@@ -1092,7 +1139,7 @@ impl<'de, const N: u16> Deserialize<'de> for Constant<N> {
     }
 }
 
-#[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, FfdDoc, Deserialize, Serialize)]
 pub struct FiscalReport {
     #[ffd(special = "tag")]
     pub code: Constant<1>,
@@ -1112,8 +1159,9 @@ pub struct FiscalReport {
     #[serde(rename = "rawData")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "fiscalDocumentFormatVer")]
-    pub fiscal_document_format_ver: <fields::FfdVer as FieldInternal>::Type,
+    pub fiscal_document_format_ver: Option<<fields::FfdVer as FieldInternal>::Type>,
     #[ffd(tag = fields::User)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<<fields::User as FieldInternal>::Type>,
@@ -1254,7 +1302,7 @@ pub struct FiscalReport {
     pub additional_data_frc: Option<<fields::FiscalReportAdditionalData as FieldInternal>::Type>,
 }
 
-#[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, FfdDoc, Deserialize, Serialize)]
 pub struct FiscalReportCorrection {
     #[ffd(special = "tag")]
     pub code: Constant<11>,
@@ -1274,8 +1322,9 @@ pub struct FiscalReportCorrection {
     #[serde(rename = "rawData")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "fiscalDocumentFormatVer")]
-    pub fiscal_document_format_ver: <fields::FfdVer as FieldInternal>::Type,
+    pub fiscal_document_format_ver: Option<<fields::FfdVer as FieldInternal>::Type>,
     #[ffd(tag = fields::User)]
     pub user: <fields::User as FieldInternal>::Type,
     #[ffd(tag = fields::UserInn)]
@@ -1538,7 +1587,7 @@ pub struct CorrectionCounters {
     pub buy_return_correction: Option<CorrectionCounter>,
 }
 
-#[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, FfdDoc, Deserialize, Serialize)]
 pub struct OpenShift {
     #[ffd(special = "tag")]
     pub code: Constant<2>,
@@ -1558,8 +1607,9 @@ pub struct OpenShift {
     #[serde(rename = "rawData")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "fiscalDocumentFormatVer")]
-    pub fiscal_document_format_ver: <fields::FfdVer as FieldInternal>::Type,
+    pub fiscal_document_format_ver: Option<<fields::FfdVer as FieldInternal>::Type>,
     #[ffd(tag = fields::UserInn)]
     #[serde(rename = "userInn")]
     pub user_inn: <fields::UserInn as FieldInternal>::Type,
@@ -1642,7 +1692,7 @@ pub struct OpenShift {
     pub additional_data_os: Option<<fields::OpenShiftAdditionalData as FieldInternal>::Type>,
 }
 
-#[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, FfdDoc, Deserialize, Serialize)]
 pub struct CurrentStateReport {
     #[ffd(special = "tag")]
     pub code: Constant<21>,
@@ -1662,8 +1712,9 @@ pub struct CurrentStateReport {
     #[serde(rename = "rawData")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "fiscalDocumentFormatVer")]
-    pub fiscal_document_format_ver: <fields::FfdVer as FieldInternal>::Type,
+    pub fiscal_document_format_ver: Option<<fields::FfdVer as FieldInternal>::Type>,
     #[ffd(tag = fields::UserInn)]
     #[serde(rename = "userInn")]
     pub user_inn: <fields::UserInn as FieldInternal>::Type,
@@ -1745,7 +1796,7 @@ pub struct CurrentStateReport {
     pub not_transmitted_documents_sum_reports: Option<CorrectionCounters>,
 }
 
-#[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, FfdDoc, Deserialize, Serialize)]
 pub struct ReceiptBso<const T: u16> {
     #[ffd(special = "tag")]
     pub code: Constant<T>,
@@ -1765,8 +1816,9 @@ pub struct ReceiptBso<const T: u16> {
     #[serde(rename = "rawData")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "fiscalDocumentFormatVer")]
-    pub fiscal_document_format_ver: <fields::FfdVer as FieldInternal>::Type,
+    pub fiscal_document_format_ver: Option<<fields::FfdVer as FieldInternal>::Type>,
     #[ffd(tag = fields::ReceiptNum)]
     #[serde(rename = "requestNumber")]
     pub request_number: <fields::ReceiptNum as FieldInternal>::Type,
@@ -1781,9 +1833,10 @@ pub struct ReceiptBso<const T: u16> {
     #[serde(rename = "operationType")]
     pub operation_type: <fields::PaymentType as FieldInternal>::Type,
     #[ffd(tag = fields::TaxType)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "appliedTaxationType")]
-    pub applied_taxation_type: <fields::TaxType as FieldInternal>::Type,
-    /// Not documented, probably an alias for appliedTaxationType for misbehaving software
+    pub applied_taxation_type: Option<<fields::TaxType as FieldInternal>::Type>,
+    /// Not documented, but accepted as an alias for appliedTaxationType
     #[ffd(tag = fields::TaxType)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "taxationType")]
@@ -2251,7 +2304,7 @@ pub struct IndustryDetails {
     pub industry_prop_value: Option<<fields::IndustryPropValue as FieldInternal>::Type>,
 }
 
-#[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, FfdDoc, Deserialize, Serialize)]
 pub struct ReceiptBsoCorrection<const T: u16> {
     #[ffd(special = "tag")]
     pub code: Constant<T>,
@@ -2271,8 +2324,9 @@ pub struct ReceiptBsoCorrection<const T: u16> {
     #[serde(rename = "rawData")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "fiscalDocumentFormatVer")]
-    pub fiscal_document_format_ver: <fields::FfdVer as FieldInternal>::Type,
+    pub fiscal_document_format_ver: Option<<fields::FfdVer as FieldInternal>::Type>,
     #[ffd(tag = fields::ReceiptNum)]
     #[serde(rename = "requestNumber")]
     pub request_number: <fields::ReceiptNum as FieldInternal>::Type,
@@ -2287,9 +2341,10 @@ pub struct ReceiptBsoCorrection<const T: u16> {
     #[serde(rename = "operationType")]
     pub operation_type: <fields::PaymentType as FieldInternal>::Type,
     #[ffd(tag = fields::TaxType)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "appliedTaxationType")]
-    pub applied_taxation_type: <fields::TaxType as FieldInternal>::Type,
-    /// Not documented, probably an alias for appliedTaxationType for misbehaving software
+    pub applied_taxation_type: Option<<fields::TaxType as FieldInternal>::Type>,
+    /// Not documented, but accepted as an alias for appliedTaxationType
     #[ffd(tag = fields::TaxType)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "taxationType")]
@@ -2488,7 +2543,7 @@ pub struct CorrectionBase {
     pub correction_document_number: Option<<fields::FnsActNumber as FieldInternal>::Type>,
 }
 
-#[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, FfdDoc, Deserialize, Serialize)]
 pub struct CloseShift {
     #[ffd(special = "tag")]
     pub code: Constant<5>,
@@ -2508,8 +2563,9 @@ pub struct CloseShift {
     #[serde(rename = "rawData")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "fiscalDocumentFormatVer")]
-    pub fiscal_document_format_ver: <fields::FfdVer as FieldInternal>::Type,
+    pub fiscal_document_format_ver: Option<<fields::FfdVer as FieldInternal>::Type>,
     #[ffd(tag = fields::DateTime)]
     #[serde(rename = "dateTime", with = "as_localtime")]
     pub date_time: <fields::DateTime as FieldInternal>::Type,
@@ -2629,7 +2685,7 @@ pub struct CloseShift {
     pub additional_data_cs: Option<<fields::CloseShiftAdditionalData as FieldInternal>::Type>,
 }
 
-#[derive(Clone, Debug, Default, Ffd, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, FfdDoc, Deserialize, Serialize)]
 pub struct CloseArchive {
     #[ffd(special = "tag")]
     pub code: Constant<6>,
@@ -2649,8 +2705,9 @@ pub struct CloseArchive {
     #[serde(rename = "rawData")]
     pub raw_data: Option<Vec<u8>>,
     #[ffd(tag = fields::FfdVer)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "fiscalDocumentFormatVer")]
-    pub fiscal_document_format_ver: <fields::FfdVer as FieldInternal>::Type,
+    pub fiscal_document_format_ver: Option<<fields::FfdVer as FieldInternal>::Type>,
     #[ffd(tag = fields::User)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<<fields::User as FieldInternal>::Type>,
@@ -2721,17 +2778,41 @@ pub enum Document {
     CloseArchive(CloseArchive),
 }
 
-impl TryFrom<Object> for Document {
+impl Document {
+    pub fn raw_data(&self) -> Option<&[u8]> {
+        match self {
+            Self::FiscalReport(x) => x.raw_data.as_deref(),
+            Self::FiscalReportCorrection(x) => x.raw_data.as_deref(),
+            Self::OpenShift(x) => x.raw_data.as_deref(),
+            Self::CurrentStateReport(x) => x.raw_data.as_deref(),
+            Self::Receipt(x) => x.raw_data.as_deref(),
+            Self::ReceiptCorrection(x) => x.raw_data.as_deref(),
+            Self::Bso(x) => x.raw_data.as_deref(),
+            Self::BsoCorrection(x) => x.raw_data.as_deref(),
+            Self::CloseShift(x) => x.raw_data.as_deref(),
+            Self::CloseArchive(x) => x.raw_data.as_deref(),
+        }
+    }
+}
+
+impl TryFrom<fiscal_data::Document> for Document {
     type Error = Error;
-    fn try_from(value: Object) -> Result<Self, Self::Error> {
+    fn try_from(value: fiscal_data::Document) -> Result<Self, Self::Error> {
+        Self::from_bytes(value.into_bytes()?)
+    }
+}
+
+impl TryFrom<Document> for fiscal_data::Document {
+    type Error = Error;
+    fn try_from(value: Document) -> Result<Self, Self::Error> {
         Self::from_bytes(value.into_bytes()?)
     }
 }
 
 impl TryFrom<Document> for Object {
     type Error = Error;
-    fn try_from(value: Document) -> Result<Self, Self::Error> {
-        Self::from_bytes(value.into_bytes()?)
+    fn try_from(doc: Document) -> Result<Self, Self::Error> {
+        Ok(fiscal_data::Document::from_bytes(doc.into_bytes()?)?.into_data())
     }
 }
 
@@ -2773,7 +2854,7 @@ impl TlvType for Document {
 
 #[cfg(test)]
 mod tests {
-    use crate::{fields, Object, TlvType};
+    use crate::{fields, TlvType};
 
     use super::Document;
 
@@ -2872,15 +2953,10 @@ mod tests {
             serde_json::to_string(&obj1).unwrap(),
             serde_json::to_string(&obj2).unwrap()
         );
-        let ser = Object::try_from(val.clone()).unwrap();
+        let ser = crate::Document::try_from(val.clone()).unwrap();
         eprintln!("{:?}", val.clone().into_bytes());
         assert_eq!(
-            ser.first_obj()
-                .unwrap()
-                .unwrap()
-                .get::<fields::KktRegNum>()
-                .unwrap()
-                .unwrap(),
+            ser.data().get::<fields::KktRegNum>().unwrap().unwrap(),
             match val {
                 Document::Receipt(x) => x.kkt_reg_id.trim().to_owned(),
                 _ => panic!(),

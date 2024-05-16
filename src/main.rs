@@ -7,7 +7,7 @@ use std::{
 use axum::response::IntoResponse;
 use chrono::Utc;
 use dashmap::DashMap;
-use fiscal_data::{enums::PaymentType, fields, Object, TlvType};
+use fiscal_data::{enums::PaymentType, fields, Document, Object, TlvType};
 use indexmap::IndexSet;
 use liquid_core::{Display_filter, Filter, FilterReflection, ParseFilter, Runtime, ValueView};
 use serde::{Deserialize, Serialize};
@@ -24,8 +24,8 @@ fn parse_qr_date(s: &str) -> Result<chrono::NaiveDateTime, chrono::ParseError> {
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, QR_DATE_FORMAT2))
 }
 
-fn parse_qr(s: &str) -> fiscal_data::Object {
-    let mut ret = fiscal_data::Object::new();
+fn parse_qr(s: &str) -> Object {
+    let mut ret = Object::new();
     for (k, v) in s.split('&').filter_map(|x| x.split_once('=')) {
         match k {
             "ofd" => {
@@ -635,13 +635,13 @@ async fn main() {
                 let data = tokio::fs::read(file.path())
                     .await
                     .expect("failed to read ffd");
-                let rec = Object::from_bytes(data).unwrap_or_else(|err| {
+                let rec = Document::from_bytes(data).unwrap_or_else(|err| {
                     panic!(
                         "failed to deserialize receipt {}: {err}",
                         file.path().display()
                     )
                 });
-                let rec = rec.first_obj().unwrap().unwrap();
+                let rec = rec.data();
                 let date = rec.get::<fields::DateTime>().ok().flatten();
                 for item in rec.get_all::<fields::ReceiptItem>().unwrap_or_default() {
                     let name = item
@@ -993,12 +993,10 @@ async fn main() {
                             log::error!("missing {path:?}");
                             return axum::response::Html::from("missing receipt cache 1".to_owned());
                         };
-                        let Ok(rec) = Object::from_bytes(data) else {
+                        let Ok(rec) = Document::from_bytes(data) else {
                             return axum::response::Html::from("invalid receipt cache 2".to_owned());
                         };
-                        let Ok(Some(rec)) = rec.first_obj() else {
-                            return axum::response::Html::from("invalid receipt cache 3".to_owned());
-                        };
+                        let rec = rec.data();
                         let mut removed = Vec::<String>::new();
                         {
                             let mut list = list.write().await;
@@ -1213,8 +1211,9 @@ async fn main() {
                                 if rec.contains::<fields::DriveNum>()
                                     && rec.contains::<fields::DocNum>()
                                     && rec.contains::<fields::DocFiscalSign>() {
-                                    match ofd::fetch(config, rec).await.and_then(|x| x.first_obj()?.ok_or(ofd::Error::MissingData("document"))) {
-                                        Ok(rec) => {
+                                    match ofd::fetch(config, rec).await {
+                                        Ok(doc) => {
+                                            let rec = doc.data();
                                             let r#fn = rec.get::<fields::DriveNum>().ok().flatten().unwrap_or_default();
                                             let i = rec.get::<fields::DocNum>().ok().flatten().unwrap_or_default();
                                             add_t.render(&liquid::object!({

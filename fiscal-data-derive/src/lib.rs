@@ -17,7 +17,7 @@ struct FieldInfo {
     ty: Type,
 }
 
-fn derive_ffd2(input: TokenStream) -> TokenStream {
+fn derive_ffd2(doc: bool, input: TokenStream) -> TokenStream {
     let input: DeriveInput = syn::parse2(input).unwrap();
     let mut fields = HashMap::<Ident, FieldInfo>::new();
     let name = input.ident;
@@ -87,9 +87,7 @@ fn derive_ffd2(input: TokenStream) -> TokenStream {
     };
     let mut init_fields = TokenStream::new();
     let mut set_fields = TokenStream::new();
-    let mut init_tag_stream = TokenStream::new();
-    let mut set_tag_stream = TokenStream::new();
-    let mut set_fps_stream = TokenStream::new();
+    let mut set_doc_fields = TokenStream::new();
     for (name, info) in fields.into_iter() {
         let is_option = info.ty.to_token_stream().to_string().starts_with("Option ");
         let is_vec = info.ty.to_token_stream().to_string().starts_with("Vec ")
@@ -101,47 +99,28 @@ fn derive_ffd2(input: TokenStream) -> TokenStream {
             }),
             FieldKind::SpecialTag => {
                 init_fields.extend(quote! {
-                    #name: tag.try_into()?,
+                    #name: doc.tag().try_into()?,
                 });
-                init_tag_stream.extend(quote! {
-                    let mut cursor = ::std::io::Cursor::new(bytes);
-                    let mut tag = [0u8, 0u8];
-                    std::io::Read::read_exact(&mut cursor, &mut tag).map_err(|_| fiscal_data::Error::Eof)?;
-                    let tag = u16::from_le_bytes(tag);
-                    let mut len = [0u8, 0u8];
-                    std::io::Read::read_exact(&mut cursor, &mut len).map_err(|_| fiscal_data::Error::Eof)?;
-                    let len = u16::from_le_bytes(len);
-                    let mut bytes = vec![0u8; len.into()];
-                    std::io::Read::read_exact(&mut cursor, &mut bytes).map_err(|_| fiscal_data::Error::Eof)?;
-                    let mut rest = vec![];
-                    std::io::Read::read_to_end(&mut cursor, &mut rest)?;
-                });
-                set_tag_stream.extend(quote! {
-                    ret.extend_from_slice(&u16::from(self.#name).to_le_bytes());
-                    ret.extend_from_slice(&u16::try_from(ret.len() - 2).map_err(|_| fiscal_data::Error::InvalidLength)?.to_le_bytes());
-                    ret.rotate_right(4);
+                set_doc_fields.extend(quote! {
+                    doc.set_tag(self.#name.try_into()?);
                 });
             }
             FieldKind::SpecialFps => {
                 if is_option {
                     init_fields.extend(quote! {
-                        #name: if rest.is_empty() {
-                            None
-                        } else {
-                            Some(rest.try_into().map_err(|_| fiscal_data::Error::InvalidLength)?)
-                        },
+                        #name: doc.message_fiscal_sign(),
                     });
-                    set_fps_stream.extend(quote! {
+                    set_doc_fields.extend(quote! {
                         if let Some(x) = self.#name {
-                            ret.extend_from_slice(&x);
+                            doc.set_message_fiscal_sign(x);
                         }
                     });
                 } else {
                     init_fields.extend(quote! {
-                        #name: rest.try_into().map_err(|_| fiscal_data::Error::InvalidLength)?,
+                        #name: doc.message_fiscal_sign().ok_or(fiscal_data::Error::InvalidLength)?,
                     });
-                    set_fps_stream.extend(quote! {
-                        ret.extend_from_slice(&x);
+                    set_doc_fields.extend(quote! {
+                        doc.set_message_fiscal_sign(x);
                     });
                 }
             }
@@ -184,20 +163,66 @@ fn derive_ffd2(input: TokenStream) -> TokenStream {
     }
     let w = Ident::new(&format!("_ffd_impl_{}", name), name.span());
     let (impl_gen, ty_gen, wher) = input.generics.split_for_impl();
+    let ty = if doc {
+        syn::parse_str::<Ident>("Document")
+    } else {
+        syn::parse_str::<Ident>("Object")
+    }
+    .unwrap();
+    let ret_name = if doc {
+        syn::parse_str::<Ident>("doc")
+    } else {
+        syn::parse_str::<Ident>("obj")
+    }
+    .unwrap();
+    let init1 = if doc {
+        quote! {
+            let doc = fiscal_data::Document::from_bytes(bytes)?;
+            let obj = doc.data();
+        }
+    } else {
+        quote! {
+            let obj = fiscal_data::Object::from_bytes(bytes)?;
+        }
+    };
+    let init2 = if doc {
+        quote! {
+            let mut doc = fiscal_data::Document::default();
+            let obj = doc.data_mut();
+        }
+    } else {
+        quote! {
+            let mut obj = fiscal_data::Object::new();
+        }
+    };
+    let extra_tryfrom = if doc {
+        quote! {
+            impl #impl_gen TryFrom<super::#name #ty_gen> for fiscal_data::Object #wher {
+                type Error = fiscal_data::Error;
+                fn try_from(doc: super::#name #ty_gen) -> Result<Self, Self::Error> {
+                    Ok(<fiscal_data::Document as fiscal_data::TlvType>::from_bytes(
+                        fiscal_data::TlvType::into_bytes(doc)?,
+                    )?.into_data())
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
     quote! {
         #[allow(non_snake_case)]
         mod #w {
             use super::*;
             use std::io::Read;
-            impl #impl_gen TryFrom<fiscal_data::Object> for super::#name #ty_gen #wher {
+            impl #impl_gen TryFrom<fiscal_data::#ty> for super::#name #ty_gen #wher {
                 type Error = fiscal_data::Error;
-                fn try_from(obj: fiscal_data::Object) -> Result<Self, Self::Error> {
+                fn try_from(obj: fiscal_data::#ty) -> Result<Self, Self::Error> {
                     fiscal_data::TlvType::from_bytes(
                         fiscal_data::TlvType::into_bytes(obj)?,
                     )
                 }
             }
-            impl #impl_gen TryFrom<super::#name #ty_gen> for fiscal_data::Object #wher {
+            impl #impl_gen TryFrom<super::#name #ty_gen> for fiscal_data::#ty #wher {
                 type Error = fiscal_data::Error;
                 fn try_from(obj: super::#name #ty_gen) -> Result<Self, Self::Error> {
                     fiscal_data::TlvType::from_bytes(
@@ -205,23 +230,21 @@ fn derive_ffd2(input: TokenStream) -> TokenStream {
                     )
                 }
             }
+            #extra_tryfrom
             impl #impl_gen fiscal_data::TlvType for super::#name #ty_gen #wher {
                 fn from_bytes(bytes: Vec<u8>) -> fiscal_data::Result<Self> {
-                    #init_tag_stream
-                    let obj = fiscal_data::Object::from_bytes(bytes)?;
+                    #init1
                     Ok(Self {
                         #init_fields
                     })
                 }
                 fn into_bytes(self) -> fiscal_data::Result<Vec<u8>> {
-                    let mut obj = fiscal_data::Object::new();
+                    #init2
                     #set_fields
-                    let mut ret = obj.into_bytes()?;
-                    #set_tag_stream
-                    #set_fps_stream
-                    Ok(ret)
+                    #set_doc_fields
+                    #ret_name.into_bytes()
                 }
-                const REPR: fiscal_data::internal::Repr = fiscal_data::internal::Repr::Object;
+                const REPR: fiscal_data::internal::Repr = fiscal_data::internal::Repr::#ty;
             }
         }
     }
@@ -229,5 +252,10 @@ fn derive_ffd2(input: TokenStream) -> TokenStream {
 
 #[proc_macro_derive(Ffd, attributes(ffd))]
 pub fn derive_ffd(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    derive_ffd2(input.into()).into()
+    derive_ffd2(false, input.into()).into()
+}
+
+#[proc_macro_derive(FfdDoc, attributes(ffd))]
+pub fn derive_ffd_doc(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    derive_ffd2(true, input.into()).into()
 }

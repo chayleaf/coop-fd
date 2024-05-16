@@ -88,7 +88,7 @@ impl Provider for Private1 {
         _config: &Config,
         data: &[u8],
         _rec: fiscal_data::Object,
-    ) -> Result<fiscal_data::Object, Error> {
+    ) -> Result<fiscal_data::Document, Error> {
         log::info!("trying {data:?}");
         let res = serde_json::from_slice::<Res<serde_json::Value>>(data)?;
         log::info!("data ok");

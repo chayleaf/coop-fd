@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use fiscal_data::{fields, Object, TlvType};
+use fiscal_data::{fields, Document, Object, TlvType};
 use std::{collections::BTreeMap, io, sync::OnceLock};
 use thiserror::Error;
 
@@ -16,8 +16,19 @@ pub mod custom {
         const TAG: u16 = 29001;
         type Type = String;
     }
+    pub enum SessionId {}
+    impl fiscal_data::internal::FieldInternal for SessionId {
+        const TAG: u16 = 29002;
+        type Type = String;
+    }
+    pub enum FdId {}
+    impl fiscal_data::internal::FieldInternal for FdId {
+        const TAG: u16 = 29003;
+        type Type = u64;
+    }
 }
 
+mod astral;
 // json, theoretically can give tlv but in practice it doesn't give tlv to mere mortals
 // mod beeline;
 // json, close to fns (changed user -> client_name, ФПС is 0)
@@ -79,7 +90,7 @@ pub(crate) trait Provider: Send + Sync {
     fn exts(&self) -> &'static [&'static str];
     fn inn(&self) -> &'static str;
     async fn fetch_raw_data(&self, rec: &mut Object) -> Result<Vec<u8>, Error>;
-    async fn parse(&self, config: &Config, data: &[u8], rec: Object) -> Result<Object, Error>;
+    async fn parse(&self, config: &Config, data: &[u8], rec: Object) -> Result<Document, Error>;
 }
 
 pub struct OfdRegistry {
@@ -96,6 +107,7 @@ impl OfdRegistry {
         if let Some(endpoint) = &c.private1_endpoint {
             ret.add(private1::Private1::new(endpoint));
         }
+        ret.add(astral::Astral);
         ret.add(ofd_ru::OfdRu);
         ret
     }
@@ -133,21 +145,8 @@ pub fn fill_missing_fields(a: &mut Object, b: &Object) {
         }
     }
 }
-pub fn extract_doc(x: &Object) -> fiscal_data::Result<Option<(u16, Object)>> {
-    let Some((doc_tag, doc)) = x.iter_raw().find(|(_, v)| !v.is_empty()) else {
-        return Ok(None);
-    };
-    let Some(doc) = doc.iter().next() else {
-        return Ok(None);
-    };
-    Ok(Some((doc_tag, Object::from_bytes(doc.clone())?)))
-}
-pub fn put_doc(x: &mut Object, tag: u16, doc: Object) -> fiscal_data::Result<()> {
-    x.set_raw(tag, &[doc.into_bytes()?]);
-    Ok(())
-}
 
-pub(crate) async fn fetch(config: &Config, mut rec: Object) -> Result<Object, Error> {
+pub(crate) async fn fetch(config: &Config, mut rec: Object) -> Result<Document, Error> {
     let drive_num = rec
         .get::<fields::DriveNum>()?
         .ok_or(Error::MissingData("fn"))?;
@@ -157,8 +156,8 @@ pub(crate) async fn fetch(config: &Config, mut rec: Object) -> Result<Object, Er
     let mut path = config.data_path("ffd");
     path.push(format!("{drive_num}_{doc_num:07}.tlv"));
     if let Ok(data) = tokio::fs::read(&path).await {
-        if let Ok(obj) = Object::from_bytes(data) {
-            return Ok(obj);
+        if let Ok(doc) = Document::from_bytes(data) {
+            return Ok(doc);
         }
     }
     let provider = registry()
@@ -189,9 +188,7 @@ pub(crate) async fn fetch(config: &Config, mut rec: Object) -> Result<Object, Er
         let _ = tokio::fs::write(raw_path, &data).await;
         parsed
     };
-    let (tag, mut doc) = extract_doc(&parsed)?.ok_or(Error::MissingData("document"))?;
-    fill_missing_fields(&mut doc, &rec);
-    put_doc(&mut parsed, tag, doc)?;
+    fill_missing_fields(parsed.data_mut(), &rec);
     let _ = tokio::fs::write(path, &parsed.clone().into_bytes()?).await;
     Ok(parsed)
 }

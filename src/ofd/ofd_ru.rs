@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use fiscal_data::{enums, fields, Ffd, Object};
+use fiscal_data::{enums, fields, Ffd, FfdDoc, Object};
 use serde::Deserialize;
 
 use super::{Error, Provider};
@@ -196,7 +196,7 @@ struct OfdItem {
     IndustryPropertyValue: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Ffd)]
+#[derive(Clone, Debug, Default, Deserialize, FfdDoc)]
 #[serde(default)]
 // some fields have underscores, so we can't use rename_all
 #[allow(non_snake_case)]
@@ -629,7 +629,12 @@ impl Provider for OfdRu {
         }
         Ok(ret)
     }
-    async fn parse(&self, config: &Config, data: &[u8], rec: Object) -> Result<Object, Error> {
+    async fn parse(
+        &self,
+        config: &Config,
+        data: &[u8],
+        rec: Object,
+    ) -> Result<fiscal_data::Document, Error> {
         let res = serde_json::from_slice::<Res>(data)?;
         let drive_num = rec
             .get::<fields::DriveNum>()?
@@ -649,16 +654,16 @@ impl Provider for OfdRu {
                     if let Ok(fiscal_sign) = <[u8; 6]>::try_from(&res.document.FiscalSign[..])
                         .or_else(|_| <[u8; 6]>::try_from(&res.doc_fiscal_sign[..]))
                     {
-                        if let Ok(Some((tag, mut doc))) = super::extract_doc(&parsed) {
-                            doc.set::<fields::DocFiscalSign>(fiscal_sign).unwrap();
-                            let _ = super::put_doc(&mut parsed, tag, doc);
-                        }
+                        parsed
+                            .data_mut()
+                            .set::<fields::DocFiscalSign>(fiscal_sign)
+                            .unwrap();
                     }
                     return Ok(parsed);
                 }
             }
         }
-        Ok(Object::try_from(res.document)?)
+        Ok(fiscal_data::Document::try_from(res.document)?)
     }
 }
 
