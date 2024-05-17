@@ -49,7 +49,11 @@ impl Provider for Private1 {
     fn exts(&self) -> &'static [&'static str] {
         &["json"]
     }
-    async fn fetch_raw_data(&self, rec: &mut fiscal_data::Object) -> Result<Vec<u8>, Error> {
+    async fn fetch_raw_data(
+        &self,
+        _config: &Config,
+        rec: &mut fiscal_data::Object,
+    ) -> Result<Vec<u8>, Error> {
         let drive_num = rec
             .get::<fields::DriveNum>()?
             .ok_or(Error::MissingData("fn"))?;
@@ -66,12 +70,22 @@ impl Provider for Private1 {
         let doc_num = rec
             .get::<fields::DocNum>()?
             .ok_or(Error::MissingData("fd"))?;
-        let date = date.format("%Y-%m-%dT%H:%M:%S");
-        let url = format!(
-            "{}?fn={drive_num}&i={doc_num}&fiscalSign={fiscal_sign}&date={date}&sum={sum}",
-            self.endpoint,
-        );
-        let ret = reqwest::get(url).await?.bytes().await?.to_vec();
+        let client = reqwest::Client::builder().build()?;
+        let ret = client
+            .execute(
+                client
+                    .get(&self.endpoint)
+                    .query(&[("fn", drive_num)])
+                    .query(&[("i", doc_num)])
+                    .query(&[("fiscalSign", fiscal_sign)])
+                    .query(&[("date", date)])
+                    .query(&[("sum", sum)])
+                    .build()?,
+            )
+            .await?
+            .bytes()
+            .await?
+            .to_vec();
         #[cfg(not(debug_assertions))]
         {
             let Ok(res) = serde_json::from_slice::<Res<serde_json::Value>>(&ret) else {

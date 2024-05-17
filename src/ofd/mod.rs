@@ -11,11 +11,12 @@ pub mod custom {
         const TAG: u16 = 29000;
         type Type = String;
     }
-    pub enum OfdId {}
-    impl fiscal_data::internal::FieldInternal for OfdId {
+    pub enum ProviderId {}
+    impl fiscal_data::internal::FieldInternal for ProviderId {
         const TAG: u16 = 29001;
         type Type = String;
     }
+    impl fiscal_data::MultiField for ProviderId {}
     pub enum SessionId {}
     impl fiscal_data::internal::FieldInternal for SessionId {
         const TAG: u16 = 29002;
@@ -26,6 +27,11 @@ pub mod custom {
         const TAG: u16 = 29003;
         type Type = u64;
     }
+    pub enum IcomCode {}
+    impl fiscal_data::internal::FieldInternal for IcomCode {
+        const TAG: u16 = 29004;
+        type Type = [u8; 3];
+    }
 }
 
 mod astral;
@@ -33,6 +39,8 @@ mod astral;
 // mod beeline;
 // json, close to fns (changed user -> client_name, ФПС is 0)
 // mod eofd;
+// not an OFD, just a provider that returns a single URL
+mod icom24;
 // html
 // mod magnit;
 // json, !has full fiscal sign in base64!
@@ -44,7 +52,7 @@ mod ofd_ru;
 // json
 mod private1;
 // html
-// mod taxcom;
+mod taxcom;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -89,8 +97,17 @@ pub(crate) trait Provider: Send + Sync {
     fn url(&self) -> &'static str;
     fn exts(&self) -> &'static [&'static str];
     fn inn(&self) -> &'static str;
-    async fn fetch_raw_data(&self, rec: &mut Object) -> Result<Vec<u8>, Error>;
+    async fn fetch_raw_data(&self, config: &Config, rec: &mut Object) -> Result<Vec<u8>, Error>;
     async fn parse(&self, config: &Config, data: &[u8], rec: Object) -> Result<Document, Error>;
+    fn cache_id(&self, rec: &Object) -> Result<String, Error> {
+        let drive_num = rec
+            .get::<fields::DriveNum>()?
+            .ok_or(Error::MissingData("fn"))?;
+        let doc_num = rec
+            .get::<fields::DocNum>()?
+            .ok_or(Error::MissingData("fd"))?;
+        Ok(format!("{drive_num}_{doc_num:07}"))
+    }
 }
 
 pub struct OfdRegistry {
@@ -108,7 +125,9 @@ impl OfdRegistry {
             ret.add(private1::Private1::new(endpoint));
         }
         ret.add(astral::Astral);
+        ret.add(icom24::Icom24);
         ret.add(ofd_ru::OfdRu);
+        ret.add(taxcom::Taxcom);
         ret
     }
     pub fn add(&mut self, ofd: impl Provider + 'static) {
@@ -125,7 +144,7 @@ impl OfdRegistry {
     }
     pub fn fill(&self, id: &str, rec: &mut Object) -> fiscal_data::Result<&dyn Provider> {
         let ofd = self.by_id(id).ok_or(fiscal_data::Error::InvalidFormat)?;
-        rec.set::<custom::OfdId>(ofd.id().to_owned())?;
+        rec.push::<custom::ProviderId>(ofd.id().to_owned())?;
         Ok(ofd)
     }
 }
@@ -146,30 +165,44 @@ pub fn fill_missing_fields(a: &mut Object, b: &Object) {
     }
 }
 
-pub(crate) async fn fetch(config: &Config, mut rec: Object) -> Result<Document, Error> {
-    let drive_num = rec
-        .get::<fields::DriveNum>()?
-        .ok_or(Error::MissingData("fn"))?;
-    let doc_num = rec
-        .get::<fields::DocNum>()?
-        .ok_or(Error::MissingData("fd"))?;
-    let mut path = config.data_path("ffd");
-    path.push(format!("{drive_num}_{doc_num:07}.tlv"));
+async fn fetch_raw<P: Provider + ?Sized>(
+    config: &Config,
+    provider: &P,
+    rec: &mut Object,
+    force: bool,
+) -> Result<Vec<u8>, Error> {
+    let cache_id = provider.cache_id(rec)?;
+    let mut raw_path = config.data_path("raw");
+    raw_path.push(provider.id());
+    let _ = tokio::fs::create_dir_all(&raw_path).await;
+    raw_path.push(format!("{cache_id}.{}", provider.exts().first().unwrap()));
+    if force || !raw_path.is_file() {
+        let data = provider.fetch_raw_data(config, rec).await?;
+        log::info!("raw data: {data:?}");
+        log::info!("writing {raw_path:?}");
+        let _ = tokio::fs::write(&raw_path, &data).await;
+        Ok(data)
+    } else {
+        Ok(tokio::fs::read(&raw_path).await?)
+    }
+}
+
+async fn fetch2<P: Provider + ?Sized>(
+    config: &Config,
+    provider: &P,
+    mut rec: Object,
+) -> Result<Document, Error> {
+    let cache_id = provider.cache_id(&rec)?;
+    let path = config.data_path(format!("ffd/{cache_id}.tlv"));
     if let Ok(data) = tokio::fs::read(&path).await {
         if let Ok(doc) = Document::from_bytes(data) {
             return Ok(doc);
         }
     }
-    let provider = registry()
-        .by_id(&rec.get::<custom::OfdId>()?.unwrap_or_default())
-        .ok_or(Error::MissingData("provider"))?;
     let mut raw_path = config.data_path("raw");
     raw_path.push(provider.id());
     let _ = tokio::fs::create_dir_all(&raw_path).await;
-    raw_path.push(format!(
-        "{drive_num}_{doc_num:07}.{}",
-        provider.exts().first().unwrap()
-    ));
+    raw_path.push(format!("{cache_id}.{}", provider.exts().first().unwrap()));
     let parsed = if let Ok(x) = tokio::fs::read(&raw_path).await {
         provider.parse(config, &x, rec.clone()).await.ok()
     } else {
@@ -178,17 +211,43 @@ pub(crate) async fn fetch(config: &Config, mut rec: Object) -> Result<Document, 
     let mut parsed = if let Some(parsed) = parsed {
         parsed
     } else {
-        let data = provider.fetch_raw_data(&mut rec).await?;
-        log::info!("raw data: {data:?}");
-        #[cfg(debug_assertions)]
-        let _ = tokio::fs::write(raw_path, &data).await;
-        #[allow(clippy::let_and_return)]
-        let parsed = provider.parse(config, &data, rec.clone()).await?;
-        #[cfg(not(debug_assertions))]
-        let _ = tokio::fs::write(raw_path, &data).await;
-        parsed
+        let data = fetch_raw(config, provider, &mut rec, true).await?;
+        provider.parse(config, &data, rec.clone()).await?
     };
     fill_missing_fields(parsed.data_mut(), &rec);
-    let _ = tokio::fs::write(path, &parsed.clone().into_bytes()?).await;
+    if !path.is_symlink() && !path.is_file() {
+        let drive_num = parsed
+            .data()
+            .get::<fields::DriveNum>()?
+            .ok_or(Error::MissingData("fn"))?;
+        let doc_num = parsed
+            .data()
+            .get::<fields::DocNum>()?
+            .ok_or(Error::MissingData("fd"))?;
+        let final_cache_id = format!("{drive_num}_{doc_num:07}");
+        if cache_id != final_cache_id {
+            let _ = tokio::fs::symlink(format!("{final_cache_id}.tlv"), path).await;
+        }
+    }
     Ok(parsed)
+}
+pub(crate) async fn fetch(config: &Config, rec: Object) -> Result<Document, Error> {
+    let provider = registry()
+        .by_id(&rec.get::<custom::ProviderId>()?.unwrap_or_default())
+        .ok_or(Error::MissingData("provider"))?;
+    let ret = fetch2(config, provider, rec).await?;
+    let drive_num = ret
+        .data()
+        .get::<fields::DriveNum>()?
+        .ok_or(Error::MissingData("fn"))?;
+    let doc_num = ret
+        .data()
+        .get::<fields::DocNum>()?
+        .ok_or(Error::MissingData("fd"))?;
+    let final_cache_id = format!("{drive_num}_{doc_num:07}");
+    let final_path = config.data_path(format!("ffd/{final_cache_id}.tlv"));
+    if !final_path.is_file() {
+        let _ = tokio::fs::write(&final_path, &ret.clone().into_bytes()?).await;
+    }
+    Ok(ret)
 }

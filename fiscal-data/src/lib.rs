@@ -876,7 +876,7 @@ impl TlvType for Object {
     }
     const REPR: Repr = Repr::Object;
 }
-impl TlvType for [u8; 6] {
+impl<const N: usize> TlvType for [u8; N] {
     fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
         bytes.try_into().map_err(|_| Error::InvalidLength)
     }

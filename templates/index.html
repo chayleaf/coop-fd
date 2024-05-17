@@ -14,6 +14,7 @@
       const video = document.getElementById('video');
       const usersel = document.getElementById('username');
       const ofd = document.getElementById('ofd');
+      const icom24 = document.getElementById('icom24-form');
       let done = false;
       let username = null;
       for (const cookie of document.cookie.split('; ')) {
@@ -31,34 +32,50 @@
           console.log('selected username', username);
         }
       }
-      if (video) {
-        window.qrScanner = new QrScanner(
-          video,
-          result => {
-            console.log('done?', done);
-            if (done) return;
-            if (!result.data) {
-              console.log('no data');
-              return;
-            }
-            {{extra_qr_processing}}
-            const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
-            const selofd = ofd.options.selectedIndex ? ofd.options[ofd.options.selectedIndex].value : null;
-            console.log('username', username);
-            if (username) {
-              done = true;
-              document.cookie = 'username=' + username;
-              console.log('decoded qr code:', result.data)
-              document.location = 'add?' + ((selofd && selofd != 'platforma-ofd') ? ('ofd=' + selofd + '&') : '') + result.data;
-            }
-          }, {
-          returnDetailedScanResult: true,
-        },
-        );
-        qrScanner.start();
-      } else {
-        console.log('not scanning');
-      }
+
+      let update = () => {
+        const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
+        const selofd = ofd.options.selectedIndex ? ofd.options[ofd.options.selectedIndex].value : null;
+        if (!username) {
+          if (window.qrScanner) qrScanner.stop(); video.hidden = true;
+          icom24.hidden = true;
+        } else if (selofd == 'icom24') {
+          if (window.qrScanner) qrScanner.stop(); video.hidden = true;
+          icom24.hidden = false;
+        } else {
+          icom24.hidden = true;
+          video.hidden = false;
+          if (!window.qrScanner) {
+            window.qrScanner = new QrScanner(
+              video,
+              result => {
+                console.log('done?', done);
+                if (done) return;
+                if (!result.data) {
+                  console.log('no data');
+                  return;
+                }
+                {{extra_qr_processing}}
+                const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
+                const selofd = ofd.options.selectedIndex ? ofd.options[ofd.options.selectedIndex].value : null;
+                console.log('username', username);
+                if (username) {
+                  done = true;
+                  document.cookie = 'username=' + username;
+                  console.log('decoded qr code:', result.data)
+                  document.location = 'add?' + ((selofd && selofd != 'platforma-ofd') ? ('ofd=' + selofd + '&') : '') + result.data;
+                }
+              }, {
+              returnDetailedScanResult: true,
+            },
+            );
+          }
+          qrScanner.start();
+        }
+      };
+      ofd.addEventListener('change', update);
+      usersel.addEventListener('change', update);
+      update();
     });
   </script>
 </head>
@@ -72,12 +89,21 @@
       {% endfor %}
     </select>
     <select id="ofd" required>
+      <option value="">Авто</option>
       {% for ofd in ofds %}
       <option value="{{ ofd.id | escape }}">{{ ofd.name | escape }}</option>
       {% endfor %}
     </select>
   </form>
-  <video id="video" width="100%" height="100%"></video>
+  <form id="icom24-form" method="get" action="/add" hidden>
+    <p>
+      <input name="ofd" value="icom24" hidden></input>
+      <input type="text" name="code" id="icom24-code" placeholder="Код (6 шестнадцатеричных цифр)" style="width:20em"></input>
+      <input type="date" name="date" id="icom24-date"></input>
+      <input type="submit" value="Отправить"></input>
+    </p>
+  </form>
+  <video id="video" width="100%" height="100%" hidden></video>
 </body>
 
 </html>

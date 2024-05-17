@@ -2,11 +2,9 @@ use std::time::Duration;
 
 use fiscal_data::{enums, fields, Object};
 use serde::Deserialize;
+use tokio::sync::mpsc;
 
-use crate::{
-    ofd::{self, registry},
-    Config, ReceiptFormatVersion,
-};
+use crate::{ofd, Config, ReceiptFormatVersion, State};
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, Eq, PartialEq)]
 pub enum Ofd {
@@ -61,11 +59,13 @@ struct Receipt {
     date: String,
 }
 
-#[allow(unused)]
-pub async fn migrate_json_to_ffd(config: &Config) {
+#[allow(clippy::type_complexity)]
+pub async fn migrate_json_to_ffd(
+    config: &Config,
+    state_tx: mpsc::Sender<Box<dyn Send + Sync + FnOnce(&mut State)>>,
+) {
     let mut have_errors = false;
     if let Ok(mut dir) = tokio::fs::read_dir(config.data_path("parsed")).await {
-        let provider = registry().by_id("").unwrap();
         while let Some(file) = dir.next_entry().await.expect("failed to read ofd cache") {
             let path = file.path();
             let Some(ext) = path
@@ -89,7 +89,7 @@ pub async fn migrate_json_to_ffd(config: &Config) {
             let Some(fp) = spl.next().and_then(|x| x.parse::<u64>().ok()) else {
                 continue;
             };
-            let mut ffd_path = config.data_path(format!("ffd/{fn}_{i:07}.tlv"));
+            let ffd_path = config.data_path(format!("ffd/{fn}_{i:07}.tlv"));
             if ffd_path.exists() {
                 continue;
             }
@@ -120,12 +120,17 @@ pub async fn migrate_json_to_ffd(config: &Config) {
                 have_errors = true;
             }
             // don't ddos providers
-            tokio::time::sleep(Duration::from_secs(30));
+            tokio::time::sleep(Duration::from_secs(30)).await;
         }
     }
     if !have_errors {
         log::info!("migration done");
-        super::mutate_state(|state| state.receipt_version = ReceiptFormatVersion::Fns);
+        state_tx
+            .send(Box::new(|state| {
+                state.receipt_version = ReceiptFormatVersion::Fns
+            }))
+            .await
+            .unwrap();
     } else {
         log::info!("errors occured");
     }

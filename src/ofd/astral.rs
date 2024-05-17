@@ -142,12 +142,7 @@ impl Provider for Astral {
     fn inn(&self) -> &'static str {
         "4029017981"
     }
-    async fn fetch_raw_data(&self, rec: &mut Object) -> Result<Vec<u8>, Error> {
-        let url = "https://ofd.astralnalog.ru/api/v4.2/landing.getReceipt";
-        let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/118.0")
-            .cookie_store(true)
-            .build()?;
+    async fn fetch_raw_data(&self, config: &Config, rec: &mut Object) -> Result<Vec<u8>, Error> {
         let drive_num = rec
             .get::<fields::DriveNum>()?
             .ok_or(Error::MissingData("fn"))?;
@@ -158,14 +153,26 @@ impl Provider for Astral {
         let doc_num = rec
             .get::<fields::DocNum>()?
             .ok_or(Error::MissingData("fd"))?;
-        let req = client.post(url).multipart(
-            reqwest::multipart::Form::new()
-                .text("fiscalDriveNumber", drive_num.to_string())
-                .text("fiscalDocumentNumber", doc_num.to_string())
-                .text("fiscalSign", fiscal_sign.to_string())
-                .text("recaptcha_response", "a"),
-        );
-        let ret = req.send().await?.bytes().await?.to_vec();
+        let client = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/118.0")
+            .build()?;
+        let ret = client
+            .execute(
+                client
+                    .post("https://ofd.astralnalog.ru/api/v4.2/landing.getReceipt")
+                    .multipart(
+                        reqwest::multipart::Form::new()
+                            .text("fiscalDriveNumber", drive_num.to_string())
+                            .text("fiscalDocumentNumber", doc_num.to_string())
+                            .text("fiscalSign", fiscal_sign.to_string())
+                            .text("recaptcha_response", "a"),
+                    )
+                    .build()?,
+            )
+            .await?
+            .bytes()
+            .await?
+            .to_vec();
         #[cfg(not(debug_assertions))]
         {
             let Ok(res) = serde_json::from_slice::<Response>(&ret) else {
@@ -175,9 +182,9 @@ impl Provider for Astral {
                 return Err(Error::MissingData("result"));
             }
         }
-        if let Some(auto) = super::registry().by_id("") {
-            if auto.id() != self.id() {
-                let _ = auto.fetch_raw_data(rec).await;
+        if let Some(provider) = super::registry().by_id("") {
+            if provider.id() != self.id() {
+                let _ = super::fetch_raw(config, provider, rec, false).await;
             }
         }
         Ok(ret)
@@ -186,21 +193,9 @@ impl Provider for Astral {
         let res = serde_json::from_slice::<Response>(data)?;
         let res = res.result.ok_or(Error::MissingData("result"))?;
         let doc = res.doc.ok_or(Error::MissingData("doc"))?;
-        let parsed = if let Some(auto) = super::registry().by_id("") {
-            let drive_num = rec
-                .get::<fields::DriveNum>()?
-                .ok_or(Error::MissingData("fn"))?;
-            let doc_num = rec
-                .get::<fields::DocNum>()?
-                .ok_or(Error::MissingData("fd"))?;
-            let mut raw_path = config.data_path("raw");
-            raw_path.push(auto.id());
-            raw_path.push(format!(
-                "{drive_num}_{doc_num:07}.{}",
-                auto.exts().first().unwrap()
-            ));
-            if let Ok(data) = tokio::fs::read(raw_path).await {
-                auto.parse(config, &data, rec.clone()).await.ok()
+        let parsed = if let Some(provider) = super::registry().by_id("") {
+            if provider.id() != self.id() {
+                super::fetch2(config, provider, rec).await.ok()
             } else {
                 None
             }

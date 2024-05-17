@@ -24,6 +24,42 @@ fn parse_qr_date(s: &str) -> Result<chrono::NaiveDateTime, chrono::ParseError> {
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, QR_DATE_FORMAT2))
 }
 
+fn decode_hex_digit(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        _ => None,
+    }
+}
+
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    s.as_bytes()
+        .chunks(2)
+        .map(|x| {
+            if let &[a, b] = x {
+                Some(decode_hex_digit(a)? * 16 + decode_hex_digit(b)?)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn parse_sum(s: &str) -> Option<u64> {
+    if let Some((a, b)) = s.split_once('.') {
+        if b.len() > 2 || b.is_empty() {
+            return None;
+        }
+        Some(
+            a.parse::<u64>().ok()? * 100
+                + b.parse::<u64>().ok()? * if b.len() == 1 { 10 } else { 1 },
+        )
+    } else {
+        s.parse().ok().map(|x: u64| x * 100)
+    }
+}
+
 fn parse_qr(s: &str) -> Object {
     let mut ret = Object::new();
     for (k, v) in s.split('&').filter_map(|x| x.split_once('=')) {
@@ -31,13 +67,23 @@ fn parse_qr(s: &str) -> Object {
             "ofd" => {
                 let _ = ofd::registry().fill(v, &mut ret);
             }
+            "date" => {
+                if let Ok(x) = chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d") {
+                    let _ = ret.set::<fiscal_data::fields::DateTime>(x.into());
+                }
+            }
+            "code" => {
+                if let Some(x) = decode_hex(v).and_then(|x| x.try_into().ok()) {
+                    let _ = ret.set::<ofd::custom::IcomCode>(x);
+                }
+            }
             "t" => {
                 if let Ok(x) = parse_qr_date(v) {
                     let _ = ret.set::<fiscal_data::fields::DateTime>(x);
                 }
             }
             "s" => {
-                if let Ok(x) = v.replace('.', "").parse::<u64>() {
+                if let Some(x) = parse_sum(v) {
                     let _ = ret.set::<fiscal_data::fields::TotalSum>(x);
                 }
             }
@@ -419,14 +465,6 @@ async fn save_list(config: &Config, list: &[ListItem]) -> io::Result<()> {
     tokio::fs::rename(path1, path2).await
 }
 
-#[allow(clippy::type_complexity)]
-static STATE_TX: OnceCell<mpsc::Sender<Box<dyn Send + Sync + FnOnce(&mut State)>>> =
-    OnceCell::const_new();
-
-async fn mutate_state(func: impl 'static + Send + Sync + FnOnce(&mut State)) {
-    STATE_TX.get().unwrap().send(Box::new(func)).await.unwrap();
-}
-
 #[tokio::main]
 async fn main() {
     env_logger::init();
@@ -685,9 +723,8 @@ async fn main() {
             .and_then(|f| serde_json::from_slice::<State>(&f).ok())
             .unwrap_or_default();
         let (tx, mut rx) = mpsc::channel(32);
-        STATE_TX.set(tx).unwrap();
         if let ReceiptFormatVersion::Json = state.receipt_version {
-            tokio::spawn(legacy::migrate_json_to_ffd(config));
+            tokio::spawn(legacy::migrate_json_to_ffd(config, tx));
         }
         while let Some(func) = rx.recv().await {
             func(&mut state);
@@ -707,19 +744,15 @@ async fn main() {
                     axum::response::Html::from(root_t.render(&liquid::object!({
                         "extra_qr_processing": format!("if({})return;", config.ignore_qr_condition),
                         "usernames": &config.usernames,
-                        "ofds": ([liquid::object!({
-                            "id": "",
-                            "name": "Авто",
-                        })].into_iter().chain(
-                            ofd::registry()
-                                .by_id
-                                .iter()
-                                .filter(|(_, v)| !v.name().is_empty())
-                                .map(|(k, v)| liquid::object!({
-                                    "id": k,
-                                    "name": format!("{} ({})", v.name(), v.url()),
-                                }))
-                        ).collect::<Vec<liquid::Object>>()),
+                        "ofds": ofd::registry()
+                            .by_id
+                            .iter()
+                            .filter(|(_, v)| !v.name().is_empty())
+                            .map(|(k, v)| liquid::object!({
+                                "id": k,
+                                "name": format!("{} ({})", v.name(), v.url()),
+                            }))
+                            .collect::<Vec<liquid::Object>>(),
                     })).unwrap_or_else(|err| format!("Error: {err}")))
                 }
             }),
@@ -1208,69 +1241,62 @@ async fn main() {
                                         }
                                     }
                                 }
-                                if rec.contains::<fields::DriveNum>()
-                                    && rec.contains::<fields::DocNum>()
-                                    && rec.contains::<fields::DocFiscalSign>() {
-                                    match ofd::fetch(config, rec).await {
-                                        Ok(doc) => {
-                                            let rec = doc.data();
-                                            let r#fn = rec.get::<fields::DriveNum>().ok().flatten().unwrap_or_default();
-                                            let i = rec.get::<fields::DocNum>().ok().flatten().unwrap_or_default();
-                                            add_t.render(&liquid::object!({
-                                                "total": rec.get::<fields::TotalSum>().ok().flatten().unwrap_or_default(),
-                                                "username": username,
-                                                "already_paid": paid_receipts.contains(&format!("{fn}_{i:07}")),
-                                                "fn": r#fn,
-                                                "i": i,
-                                                "items": rec.get_all::<fields::ReceiptItem>().unwrap_or_default().into_iter().enumerate().map(|(i, item)| {
-                                                    liquid::object!({
-                                                        "num": i,
-                                                        "name": item
-                                                            .get::<fields::ItemName>()
-                                                            .ok()
-                                                            .flatten()
-                                                            .unwrap_or_default(),
-                                                        "count": item
-                                                            .get::<fields::ItemQuantity>()
-                                                            .ok()
-                                                            .flatten()
-                                                            .unwrap_or_default(),
-                                                        "unit": item
-                                                            .get::<fields::Unit>()
-                                                            .ok()
-                                                            .flatten()
-                                                            .filter(|unit| !unit.is_empty())
-                                                            .or_else(|| {
-                                                                item.get::<fields::ItemQuantityUnit>()
-                                                                    .ok()
-                                                                    .flatten()
-                                                                    .map(|x| x.to_string())
-                                                            })
-                                                            .unwrap_or_default(),
-                                                        "per_item": item
-                                                            .get::<fields::ItemUnitPrice>()
-                                                            .ok()
-                                                            .flatten()
-                                                            .unwrap_or_default(),
-                                                        "total": item
-                                                            .get::<fields::ItemTotalPrice>()
-                                                            .ok()
-                                                            .flatten()
-                                                            .unwrap_or_default(),
-                                                    })
-                                                }).collect::<Vec<_>>(),
-                                                "usernames": &config.usernames,
-                                            }))
-                                            .unwrap_or_else(|err| format!("Error: {err}"))
-                                        }
-                                        Err(err) => {
-                                            log::error!("ofd fetch failed: {err}");
-                                            format!("error: {err}")
-                                        }
+                                match ofd::fetch(config, rec).await {
+                                    Ok(doc) => {
+                                        let rec = doc.data();
+                                        let r#fn = rec.get::<fields::DriveNum>().ok().flatten().unwrap_or_default();
+                                        let i = rec.get::<fields::DocNum>().ok().flatten().unwrap_or_default();
+                                        add_t.render(&liquid::object!({
+                                            "total": rec.get::<fields::TotalSum>().ok().flatten().unwrap_or_default(),
+                                            "username": username,
+                                            "already_paid": paid_receipts.contains(&format!("{fn}_{i:07}")),
+                                            "fn": r#fn,
+                                            "i": i,
+                                            "items": rec.get_all::<fields::ReceiptItem>().unwrap_or_default().into_iter().enumerate().map(|(i, item)| {
+                                                liquid::object!({
+                                                    "num": i,
+                                                    "name": item
+                                                        .get::<fields::ItemName>()
+                                                        .ok()
+                                                        .flatten()
+                                                        .unwrap_or_default(),
+                                                    "count": item
+                                                        .get::<fields::ItemQuantity>()
+                                                        .ok()
+                                                        .flatten()
+                                                        .unwrap_or_default(),
+                                                    "unit": item
+                                                        .get::<fields::Unit>()
+                                                        .ok()
+                                                        .flatten()
+                                                        .filter(|unit| !unit.is_empty())
+                                                        .or_else(|| {
+                                                            item.get::<fields::ItemQuantityUnit>()
+                                                                .ok()
+                                                                .flatten()
+                                                                .map(|x| x.to_string())
+                                                        })
+                                                        .unwrap_or_default(),
+                                                    "per_item": item
+                                                        .get::<fields::ItemUnitPrice>()
+                                                        .ok()
+                                                        .flatten()
+                                                        .unwrap_or_default(),
+                                                    "total": item
+                                                        .get::<fields::ItemTotalPrice>()
+                                                        .ok()
+                                                        .flatten()
+                                                        .unwrap_or_default(),
+                                                })
+                                            }).collect::<Vec<_>>(),
+                                            "usernames": &config.usernames,
+                                        }))
+                                        .unwrap_or_else(|err| format!("Error: {err}"))
                                     }
-                                } else {
-                                    log::error!("missing fn/i/fp");
-                                    "error".to_owned()
+                                    Err(err) => {
+                                        log::error!("ofd fetch failed: {err}");
+                                        format!("error: {err}")
+                                    }
                                 }
                             } else {
                                 "missing username cookie".to_owned()

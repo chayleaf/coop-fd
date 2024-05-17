@@ -570,7 +570,7 @@ impl Provider for OfdRu {
     fn inn(&self) -> &'static str {
         "7841465198"
     }
-    async fn fetch_raw_data(&self, rec: &mut Object) -> Result<Vec<u8>, Error> {
+    async fn fetch_raw_data(&self, config: &Config, rec: &mut Object) -> Result<Vec<u8>, Error> {
         let client = reqwest::Client::builder()
             // .user_agent("Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/118.0")
             .cookie_store(true)
@@ -607,10 +607,14 @@ impl Provider for OfdRu {
         .and_then(|x| x.split('&').next()) else {
             return Err(Error::MissingData("id"));
         };
-        let url = format!("https://ofd.ru/Document/ReceiptJsonDownload?DocId={id}");
-        log::info!("ofd.ru: fetching from {url}");
+        log::info!("ofd.ru: id = {id}");
         let ret = client
-            .execute(client.get(url).build()?)
+            .execute(
+                client
+                    .get("https://ofd.ru/Document/ReceiptJsonDownload")
+                    .query(&[("DocId", id)])
+                    .build()?,
+            )
             .await?
             .bytes()
             .await?
@@ -622,9 +626,9 @@ impl Provider for OfdRu {
             };
         }
         rec.set::<super::custom::Id>(id.to_owned())?;
-        if let Some(auto) = super::registry().by_id("") {
-            if auto.id() != self.id() {
-                let _ = auto.fetch_raw_data(rec).await;
+        if let Some(provider) = super::registry().by_id("") {
+            if provider.id() != self.id() {
+                let _ = super::fetch_raw(config, provider, rec, false).await;
             }
         }
         Ok(ret)
@@ -636,31 +640,16 @@ impl Provider for OfdRu {
         rec: Object,
     ) -> Result<fiscal_data::Document, Error> {
         let res = serde_json::from_slice::<Res>(data)?;
-        let drive_num = rec
-            .get::<fields::DriveNum>()?
-            .ok_or(Error::MissingData("fn"))?;
-        let doc_num = rec
-            .get::<fields::DocNum>()?
-            .ok_or(Error::MissingData("fd"))?;
-        if let Some(auto) = super::registry().by_id("") {
-            let mut raw_path = config.data_path("raw");
-            raw_path.push(auto.id());
-            raw_path.push(format!(
-                "{drive_num}_{doc_num:07}.{}",
-                auto.exts().first().unwrap()
-            ));
-            if let Ok(data) = tokio::fs::read(raw_path).await {
-                if let Ok(mut parsed) = auto.parse(config, &data, rec.clone()).await {
-                    if let Ok(fiscal_sign) = <[u8; 6]>::try_from(&res.document.FiscalSign[..])
-                        .or_else(|_| <[u8; 6]>::try_from(&res.doc_fiscal_sign[..]))
-                    {
-                        parsed
-                            .data_mut()
-                            .set::<fields::DocFiscalSign>(fiscal_sign)
-                            .unwrap();
-                    }
-                    return Ok(parsed);
+        if let Some(provider) = super::registry().by_id("") {
+            if let Ok(mut doc) = super::fetch2(config, provider, rec).await {
+                if let Ok(fiscal_sign) = <[u8; 6]>::try_from(&res.document.FiscalSign[..])
+                    .or_else(|_| <[u8; 6]>::try_from(&res.doc_fiscal_sign[..]))
+                {
+                    doc.data_mut()
+                        .set::<fields::DocFiscalSign>(fiscal_sign)
+                        .unwrap();
                 }
+                return Ok(doc);
             }
         }
         Ok(fiscal_data::Document::try_from(res.document)?)
