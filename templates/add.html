@@ -13,6 +13,9 @@
   {% if already_paid %}
   <h1>Чек уже был оплачен, возможно, вы ошиблись!</h1>
   {% endif %}
+  {% if is_advance %}
+  <h1>Не разделяйте сумму предоплаты, эта сумма может измениться! После получения товаров вам должен прийти новый чек.</h1>
+  {% endif %}
   <form action="submit" method="post">
     <input type="hidden" name="fn" value="{{ fn | escape }}"></input>
     <input type="hidden" name="i" value="{{ i | escape }}"></input>
@@ -21,9 +24,21 @@
       {% for item in items %}
       <li>
         {% for user in usernames %}
-        <input type="checkbox" name="{{ user | escape }}${{ item.num }}" checked="true">{{ user | escape }}</input>
+        <input
+          type="checkbox"
+          name="{{ user | escape }}${{ item.num }}"
+          {% unless item.is_advance and user != username %}checked="true"{% endunless %}
+        >
+          {{ user | escape }}
+        </input>
         {% endfor %}
-        <div>{{ item.name | escape }}*{{ item.count }} {{ item.unit | escape }} = {{ item.per_item | currency }}*{{ item.count }} = {{ item.total | currency }}</div>
+        <div>
+          {{ item.name | escape }}*{{ item.count }}
+          {{ item.unit | escape }}
+          = {{ item.per_item | currency }}*{{ item.count }}
+          = {{ item.total | currency }}
+          {% if item.is_advance %}<b>(Предоплата)</b>{% endif %}
+        </div>
       </li>
       {% endfor %}
     </ol>

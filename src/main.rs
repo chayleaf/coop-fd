@@ -7,7 +7,10 @@ use std::{
 use axum::response::IntoResponse;
 use chrono::Utc;
 use dashmap::DashMap;
-use fiscal_data::{enums::PaymentType, fields, Document, Object, TlvType};
+use fiscal_data::{
+    enums::{PaymentMethod, PaymentType},
+    fields, Document, Object, TlvType,
+};
 use indexmap::IndexSet;
 use liquid_core::{Display_filter, Filter, FilterReflection, ParseFilter, Runtime, ValueView};
 use serde::{Deserialize, Serialize};
@@ -463,6 +466,27 @@ async fn save_list(config: &Config, list: &[ListItem]) -> io::Result<()> {
     )
     .await?;
     tokio::fs::rename(path1, path2).await
+}
+
+fn item_is_advance(item: &Object) -> fiscal_data::Result<bool> {
+    Ok(matches!(
+        item.get::<fields::PaymentMethod>()?,
+        Some(
+            PaymentMethod::Advance
+                | PaymentMethod::Prepaid
+                | PaymentMethod::FullPrepaid
+                | PaymentMethod::PaymentOfCredit
+        )
+    ))
+}
+
+fn is_advance(rec: &Object) -> fiscal_data::Result<bool> {
+    for item in rec.get_all::<fields::ReceiptItem>()? {
+        if item_is_advance(&item)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[tokio::main]
@@ -1250,10 +1274,12 @@ async fn main() {
                                             "total": rec.get::<fields::TotalSum>().ok().flatten().unwrap_or_default(),
                                             "username": username,
                                             "already_paid": paid_receipts.contains(&format!("{fn}_{i:07}")),
+                                            "is_advance": is_advance(rec).unwrap_or_default(),
                                             "fn": r#fn,
                                             "i": i,
                                             "items": rec.get_all::<fields::ReceiptItem>().unwrap_or_default().into_iter().enumerate().map(|(i, item)| {
                                                 liquid::object!({
+                                                    "is_advance": item_is_advance(&item).unwrap_or_default(),
                                                     "num": i,
                                                     "name": item
                                                         .get::<fields::ItemName>()

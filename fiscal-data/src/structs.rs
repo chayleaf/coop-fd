@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 
-pub struct FieldSet(&'static [FieldSpec]);
+pub struct FieldSet(pub &'static [FieldSpec]);
 
 bitflags! {
     #[repr(transparent)]
