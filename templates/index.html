@@ -15,6 +15,10 @@
       const usersel = document.getElementById('username');
       const ofd = document.getElementById('ofd');
       const icom24 = document.getElementById('icom24-form');
+      const custom = document.getElementById('custom-form');
+      const customTo = document.getElementById('custom-to');
+      const customSum = document.getElementById('custom-sum');
+      const customSum1 = document.getElementById('custom-sum1');
       let done = false;
       let username = null;
       for (const cookie of document.cookie.split('; ')) {
@@ -33,44 +37,70 @@
         }
       }
 
+      const updateFns = {
+        "default": {
+          show: () => {
+            video.hidden = false;
+            if (!window.qrScanner) {
+              window.qrScanner = new QrScanner(
+                video,
+                result => {
+                  console.log('done?', done);
+                  if (done) return;
+                  if (!result.data) {
+                    console.log('no data');
+                    return;
+                  }
+                  {{extra_qr_processing}}
+                  const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
+                  const selofd = ofd.options.selectedIndex ? ofd.options[ofd.options.selectedIndex].value : null;
+                  console.log('username', username);
+                  if (username) {
+                    done = true;
+                    document.cookie = 'username=' + username;
+                    console.log('decoded qr code:', result.data)
+                    document.location = 'add?' + ((selofd && selofd != 'platforma-ofd') ? ('ofd=' + selofd + '&') : '') + result.data;
+                  }
+                }, {
+                returnDetailedScanResult: true,
+              },
+              );
+            }
+            qrScanner.start();
+          },
+          hide: () => {
+            if (window.qrScanner) qrScanner.stop();
+            video.hidden = true;
+          },
+        },
+        icom24: {
+          show: () => icom24.hidden = false,
+          hide: () => icom24.hidden = true,
+        },
+        custom: {
+          show: username => {
+            customTo.value = username;
+            custom.hidden = false;
+          },
+          hide: () => custom.hidden = true,
+        },
+      };
+
+      let updateCustomSum = () => customSum1.value = (customSum.value - 0) * 100;
+      customSum.addEventListener('change', updateCustomSum);
+      updateCustomSum();
+
       let update = () => {
         const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
         const selofd = ofd.options.selectedIndex ? ofd.options[ofd.options.selectedIndex].value : null;
-        if (!username) {
-          if (window.qrScanner) qrScanner.stop(); video.hidden = true;
-          icom24.hidden = true;
-        } else if (selofd == 'icom24') {
-          if (window.qrScanner) qrScanner.stop(); video.hidden = true;
-          icom24.hidden = false;
-        } else {
-          icom24.hidden = true;
-          video.hidden = false;
-          if (!window.qrScanner) {
-            window.qrScanner = new QrScanner(
-              video,
-              result => {
-                console.log('done?', done);
-                if (done) return;
-                if (!result.data) {
-                  console.log('no data');
-                  return;
-                }
-                {{extra_qr_processing}}
-                const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
-                const selofd = ofd.options.selectedIndex ? ofd.options[ofd.options.selectedIndex].value : null;
-                console.log('username', username);
-                if (username) {
-                  done = true;
-                  document.cookie = 'username=' + username;
-                  console.log('decoded qr code:', result.data)
-                  document.location = 'add?' + ((selofd && selofd != 'platforma-ofd') ? ('ofd=' + selofd + '&') : '') + result.data;
-                }
-              }, {
-              returnDetailedScanResult: true,
-            },
-            );
+        let target = "";
+        if (username) target = Object.keys(updateFns).indexOf(selofd) >= 0 ? selofd : "default";
+        for (let ofd in updateFns) {
+          if (ofd == target) {
+            updateFns[ofd].show(username);
+          } else {
+            updateFns[ofd].hide();
           }
-          qrScanner.start();
         }
       };
       ofd.addEventListener('change', update);
@@ -93,6 +123,7 @@
       {% for ofd in ofds %}
       <option value="{{ ofd.id | escape }}">{{ ofd.name | escape }}</option>
       {% endfor %}
+      <option value="custom">Добавить платёж вручную</option>
     </select>
   </form>
   <form id="icom24-form" method="get" action="/add" hidden>
@@ -101,6 +132,29 @@
       <input type="text" name="code" id="icom24-code" placeholder="Код (6 шестнадцатеричных цифр)" style="width:20em"></input>
       <input type="date" name="date" id="icom24-date"></input>
       <input type="submit" value="Отправить"></input>
+    </p>
+  </form>
+  <form id="custom-form" method="post" action="/api/pay" hidden>
+    <p>
+      <div>
+        <input name="response-format" value="html" hidden></input>
+        <input id="custom-to" name="to" value="" hidden></input>
+        <input type="text" name="comment" id="custom-label" placeholder="Комментарий" style="width:20em"></input>
+        <input type="number" id="custom-sum" placeholder="Сумма" step="0.01"></input>
+        <input name="amount" id="custom-sum1" hidden></input>
+      </div>
+      <div style="margin-top:0.5em">
+        {% for user in usernames %}
+        <input
+          type="checkbox"
+          name="from_{{ user | escape }}"
+          checked="true"
+        >
+          {{ user | escape }}
+        </input>
+        {% endfor %}
+        <input type="submit" value="Отправить"></input>
+      </div>
     </p>
   </form>
   <video id="video" width="100%" height="100%" hidden></video>

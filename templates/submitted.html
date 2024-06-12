@@ -2,10 +2,10 @@
 <html>
 
 <head>
-  <link rel="preload" href="style.css" as="style">
+  <link rel="preload" href="{{ prefix }}/style.css" as="style">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link href="style.css" rel="stylesheet">
+  <link href="{{ prefix }}/style.css" rel="stylesheet">
 </head>
 
 <body>
@@ -27,7 +27,7 @@
   </ul>
   <hr />
   {% endunless %}
-  <a href="."><button>Добавить ещё чек</button></a>
+  <a href="{{ prefix }}"><button>Добавить ещё чек</button></a>
 </body>
 
 </html>

@@ -878,6 +878,7 @@ async fn main() {
             axum::routing::post(
                 |axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
                     let config = copy_ref(config);
+                    let submitted_t = copy_ref(submitted_t);
                     async move {
                         (
                             [(
@@ -893,14 +894,32 @@ async fn main() {
                                         if let Some(amt) =
                                             amt.parse::<i64>().ok().filter(|x| *x != 0)
                                         {
+                                            let is_html = matches!(f.get("response-format"), Some(x) if x == "html");
                                             let mut tr = Transaction::new(meta);
-                                            if let Some(from) = f.get("from") {
+                                            if is_html {
+                                                let mut all_payers = vec![];
+                                                for (k, v) in &f {
+                                                    let Some(username) = k.strip_prefix("from_") else {
+                                                        continue;
+                                                    };
+                                                    if matches!(v.as_str(), "" | "off" | "0" | "false") {
+                                                        continue;
+                                                    }
+                                                    all_payers.push(username);
+                                                }
+                                                let payers_len = i64::try_from(all_payers.len())
+                                                    .expect("usize->i64 conversion failed");
+                                                for user in all_payers {
+                                                    if user != to {
+                                                        tr.pay(
+                                                            user,
+                                                            to,
+                                                            amt / payers_len,
+                                                        );
+                                                    }
+                                                }
+                                            } else if let Some(from) = f.get("from") {
                                                 tr.pay(from, to, amt);
-                                                tr.finalize();
-                                                serde_json::to_string(
-                                                    &add_transaction(config, tr).await,
-                                                )
-                                                .expect("balance serialization failed")
                                             } else {
                                                 for user in &config.usernames {
                                                     if user != to {
@@ -914,9 +933,32 @@ async fn main() {
                                                         );
                                                     }
                                                 }
-                                                tr.finalize();
+                                            }
+                                            tr.finalize();
+                                            let balance = add_transaction(config, tr).await;
+                                            if is_html {
+                                                let balance = balance
+                                                    .into_iter()
+                                                    .map(|(username, balance)| {
+                                                        liquid::object!({
+                                                            "username": username,
+                                                            "balance": balance,
+                                                        })
+                                                    })
+                                                    .collect::<Vec<_>>();
+                                                return axum::response::Html::from(
+                                                    submitted_t
+                                                        .render(&liquid::object!({
+                                                            "prefix": "..",
+                                                            "balance": balance,
+                                                            "username": to,
+                                                            "removed": [],
+                                                        }))
+                                                        .unwrap_or_else(|err| format!("Error: {err}")),
+                                                ).into_response();
+                                            } else  {
                                                 serde_json::to_string(
-                                                    &add_transaction(config, tr).await,
+                                                    &balance,
                                                 )
                                                 .expect("balance serialization failed")
                                             }
@@ -1187,6 +1229,7 @@ async fn main() {
                         axum::response::Html::from(
                             submitted_t
                                 .render(&liquid::object!({
+                                    "prefix": ".",
                                     "balance": balance,
                                     "username": username,
                                     "removed": removed,
