@@ -1305,6 +1305,15 @@ async fn main() {
                                             {
                                                 let _ = rec.set::<fields::DateTime>(x);
                                             }
+                                            if let Some(x) = text
+                                                .split("<big>ИТОГ <right>≡")
+                                                .nth(1)
+                                                .and_then(|x| x.split('<').next())
+                                            {
+                                                if let Some(sum) = parse_sum(x) {
+                                                    let _ = rec.set::<fields::TotalSum>(sum);
+                                                }
+                                            }
                                         }
                                     }
                                 }
