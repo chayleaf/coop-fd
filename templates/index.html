@@ -124,7 +124,7 @@
             a.href = "javascript:void(0)";
             a.addEventListener('click', () => {
               customComment.value = item;
-              customSum.value = "" + (entry.last_price / 100);
+              if (entry.last_price) customSum.value = "" + (entry.last_price / 100);
               updateCustomSum();
             });
             a.appendChild(document.createTextNode(item));
