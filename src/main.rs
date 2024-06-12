@@ -280,6 +280,7 @@ enum TransactionMeta {
         paid: HashMap<String, BTreeSet<usize>>,
     },
     Comment(String),
+    Comment2(String, i64),
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -457,6 +458,13 @@ struct Commodity {
     count: usize,
 }
 
+#[derive(Default)]
+struct Comment {
+    last_price: i64,
+    last_time: chrono::DateTime<Utc>,
+    count: usize,
+}
+
 async fn save_list(config: &Config, list: &[ListItem]) -> io::Result<()> {
     let path1 = config.data_path("list.json.tmp");
     let path2 = config.data_path("list.json");
@@ -512,6 +520,7 @@ async fn main() {
         .unwrap();
 
     let commodities = &*Box::leak(Box::new(DashMap::<String, Commodity>::new()));
+    let comments = &*Box::leak(Box::new(DashMap::<String, Comment>::new()));
     let paid_receipts = Box::leak(Box::new(dashmap::DashSet::<String>::new()));
 
     tokio::join!(
@@ -651,26 +660,47 @@ async fn main() {
             let mut dir = tokio::fs::read_dir(config.data_path("transactions"))
                 .await
                 .expect("failed to read transaction list");
+            let mut files = vec![];
             while let Some(file) = dir
                 .next_entry()
                 .await
                 .expect("failed to read transaction list entry")
             {
-                if !matches!(file.path().extension().and_then(|x| x.to_str()).map(str::to_lowercase), Some(x) if x.as_str() == "json")
+                files.push(file.path());
+            }
+            files.sort_unstable();
+            for file in files {
+                if !matches!(file.extension().and_then(|x| x.to_str()).map(str::to_lowercase), Some(x) if x.as_str() == "json")
                 {
                     continue;
                 }
-                let data = tokio::fs::read(file.path())
+                let data = tokio::fs::read(&file)
                     .await
                     .expect("failed to read transaction");
                 let tr = serde_json::from_slice::<Transaction>(&data).unwrap_or_else(|_| {
                     panic!(
                         "failed to deserialize transaction {}",
-                        file.path().display()
+                        file.display()
                     )
                 });
-                if let Some(TransactionMeta::Receipt { r#fn, i, paid: _ }) = tr.meta {
-                    paid_receipts.insert(format!("{fn}_{i:07}"));
+                match tr.meta {
+                    Some(TransactionMeta::Receipt { r#fn, i, paid: _ }) => {
+                        paid_receipts.insert(format!("{fn}_{i:07}"));
+                    }
+                    Some(TransactionMeta::Comment(comment)) => {
+                        let mut val = comments.entry(comment).or_default();
+                        let val = val.value_mut();
+                        val.last_time = tr.date;
+                        val.count += 1;
+                    }
+                    Some(TransactionMeta::Comment2(comment, price)) => {
+                        let mut val = comments.entry(comment).or_default();
+                        let val = val.value_mut();
+                        val.last_time = tr.date;
+                        val.last_price = price;
+                        val.count += 1;
+                    }
+                    None => {}
                 }
                 for (k, v) in &tr.balance_changes {
                     let x = balance.entry(k.clone()).or_default();
@@ -728,7 +758,7 @@ async fn main() {
                         val.unit = unit;
                     }
                     if let Some(date) = date {
-                        val.last_time = date;
+                        val.last_time = val.last_time.max(date);
                     }
                     val.count += 1;
                 }
@@ -764,8 +794,22 @@ async fn main() {
             axum::routing::get(|| {
                 let config = copy_ref(config);
                 let root_t = copy_ref(root_t);
+                let comments = copy_ref(comments);
                 async move {
+                    let comments = comments
+                        .iter()
+                        .map(|item| {
+                            let val = item.value();
+                            liquid::object!({
+                                "name": item.key(),
+                                "last_price": val.last_price,
+                                "count": val.count,
+                                "last_timestamp": val.last_time.timestamp(),
+                            })
+                        })
+                        .collect::<Vec<_>>();
                     axum::response::Html::from(root_t.render(&liquid::object!({
+                        "comments": comments,
                         "extra_qr_processing": format!("if({})return;", config.ignore_qr_condition),
                         "usernames": &config.usernames,
                         "ofds": ofd::registry()
@@ -878,6 +922,7 @@ async fn main() {
             axum::routing::post(
                 |axum::extract::Form(f): axum::extract::Form<HashMap<String, String>>| {
                     let config = copy_ref(config);
+                    let comments = copy_ref(comments);
                     let submitted_t = copy_ref(submitted_t);
                     async move {
                         (
@@ -886,16 +931,23 @@ async fn main() {
                                 axum::http::HeaderValue::from_static("application/json"),
                             )],
                             {
-                                let meta = f
-                                    .get("comment")
-                                    .map(|x| TransactionMeta::Comment(x.clone()));
                                 if let Some(to) = f.get("to") {
                                     if let Some(amt) = f.get("amount") {
                                         if let Some(amt) =
                                             amt.parse::<i64>().ok().filter(|x| *x != 0)
                                         {
+                                            let mut tr = f
+                                                .get("comment")
+                                                .map_or_else(|| Transaction::new(None), |x| {
+                                                    let mut val = comments.entry(x.clone()).or_default();
+                                                    let val = val.value_mut();
+                                                    val.last_price = amt;
+                                                    val.count += 1;
+                                                    let tr = Transaction::new(Some(TransactionMeta::Comment2(x.clone(), amt)));
+                                                    val.last_time = tr.date;
+                                                    tr
+                                                });
                                             let is_html = matches!(f.get("response-format"), Some(x) if x == "html");
-                                            let mut tr = Transaction::new(meta);
                                             if is_html {
                                                 let mut all_payers = vec![];
                                                 for (k, v) in &f {
@@ -1075,7 +1127,7 @@ async fn main() {
                     let config = copy_ref(config);
                     let paid_receipts = copy_ref(paid_receipts);
                     let submitted_t = copy_ref(submitted_t);
-                    let units = copy_ref(commodities);
+                    let commodities = copy_ref(commodities);
                     let list = copy_ref(list);
                     async move {
                         let Some(r#fn) = f.get("fn").filter(|x| x.bytes().all(|x| x.is_ascii_digit())) else {
@@ -1186,7 +1238,7 @@ async fn main() {
                                 .ok()
                                 .flatten()
                                 .expect("failed to read item name");
-                            let mut val = units.entry(name).or_default();
+                            let mut val = commodities.entry(name).or_default();
                             let val = val.value_mut();
                             if let Some(unit) = item
                                 .get::<fields::Unit>()

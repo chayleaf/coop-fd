@@ -3,14 +3,33 @@
 
 <head>
   <link rel="preload" href="style.css" as="style">
+  <link rel="preload" href="fzf.js" as="script">
   <link rel="preload" href="qr-scanner.umd.min.js" as="script">
   <link rel="preload" href="qr-scanner-worker.min.js" as="script">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="style.css" rel="stylesheet">
+  <script src="fzf.js"></script>
   <script src="qr-scanner.umd.min.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
+      const entries = {
+        {% for comment in comments %}
+        "{{ comment.name | cescape }}": { last_price: {{comment.last_price}}, count: {{comment.count}}, last_timestamp: {{comment.last_timestamp}} },
+        {% endfor %}
+      };
+      const f = new fzf.Fzf(Object.keys(entries), {
+        casing: "case-insensitive",
+        limit: 5,
+        tiebreakers: [
+          // -1 = choose A
+          //  1 = choose B
+          ((a, b) => entries[b.item].count - entries[a.item].count),
+          ((a, b) => (b.start == 0) - (a.start == 0)),
+          ((a, b) => entries[b.item].last_timestamp - entries[a.item].last_timestamp),
+          fzf.byStartAsc,
+        ]
+      });
       const video = document.getElementById('video');
       const usersel = document.getElementById('username');
       const ofd = document.getElementById('ofd');
@@ -19,6 +38,8 @@
       const customTo = document.getElementById('custom-to');
       const customSum = document.getElementById('custom-sum');
       const customSum1 = document.getElementById('custom-sum1');
+      const customComment = document.getElementById('custom-comment');
+      const customCommentList = document.getElementById('custom-comment-list');
       let done = false;
       let username = null;
       for (const cookie of document.cookie.split('; ')) {
@@ -90,6 +111,30 @@
       customSum.addEventListener('change', updateCustomSum);
       updateCustomSum();
 
+      let updateComment = () => {
+        customCommentList.innerHTML = "";
+        if (customComment.value) {
+          const items = f.find(customComment.value);
+          for (let i = 0; i < items.length; i++) {
+            const item = items[i].item.normalize();
+            const entry = entries[items[i].item];
+            /* <li><a href="javascript:void(0)">{item}</a></li> */
+            const li = document.createElement('li');
+            const a = document.createElement('a');
+            a.href = "javascript:void(0)";
+            a.addEventListener('click', () => {
+              customComment.value = item;
+              customSum.value = "" + (entry.last_price / 100);
+              updateCustomSum();
+            });
+            a.appendChild(document.createTextNode(item));
+            li.appendChild(a);
+            customCommentList.appendChild(li);
+          }
+        }
+      };
+      customComment.addEventListener('input', updateComment);
+
       let update = () => {
         const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
         const selofd = ofd.options.selectedIndex ? ofd.options[ofd.options.selectedIndex].value : null;
@@ -139,11 +184,14 @@
       <div>
         <input name="response-format" value="html" hidden></input>
         <input id="custom-to" name="to" value="" hidden></input>
-        <input type="text" name="comment" id="custom-label" placeholder="Комментарий" style="width:20em"></input>
+      </div>
+      <div>
+        <input type="text" name="comment" id="custom-comment" placeholder="Комментарий" style="width:20em"></input>
+        <ul id="custom-comment-list"></ul>
+      </div>
+      <div>
         <input type="number" id="custom-sum" placeholder="Сумма" step="0.01"></input>
         <input name="amount" id="custom-sum1" hidden></input>
-      </div>
-      <div style="margin-top:0.5em">
         {% for user in usernames %}
         <input
           type="checkbox"
@@ -153,6 +201,8 @@
           {{ user | escape }}
         </input>
         {% endfor %}
+      </div>
+      <div style="margin-top:1em">
         <input type="submit" value="Отправить"></input>
       </div>
     </p>

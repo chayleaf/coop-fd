@@ -3,6 +3,7 @@
 
 <head>
   <link rel="preload" href="style.css" as="style">
+  <link rel="preload" href="fzf.js" as="script">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="style.css" rel="stylesheet">
@@ -10,7 +11,7 @@
   <script>
     const entries = {
       {% for item in items %}
-      "{{ item.name | cescape }}": {unit: "{{ item.unit | cescape }}", count: {{item.count}}, last_timestamp: {{item.last_timestamp}} },
+      "{{ item.name | cescape }}": { unit: "{{ item.unit | cescape }}", count: {{item.count}}, last_timestamp: {{item.last_timestamp}} },
       {% endfor %}
     };
     document.addEventListener('DOMContentLoaded', () => {
