@@ -123,15 +123,15 @@ pub async fn migrate_json_to_ffd(
             tokio::time::sleep(Duration::from_secs(30)).await;
         }
     }
-    if !have_errors {
+    if have_errors {
+        log::info!("errors occured");
+    } else {
         log::info!("migration done");
         state_tx
             .send(Box::new(|state| {
-                state.receipt_version = ReceiptFormatVersion::Fns
+                state.receipt_version = ReceiptFormatVersion::Fns;
             }))
             .await
             .unwrap();
-    } else {
-        log::info!("errors occured");
     }
 }

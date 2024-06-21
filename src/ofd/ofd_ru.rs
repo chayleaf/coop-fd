@@ -585,10 +585,7 @@ impl Provider for OfdRu {
         let doc_num = rec
             .get::<fields::DocNum>()?
             .ok_or(Error::MissingData("fd"))?;
-        let url = format!(
-            "https://check.ofd.ru/rec/{}/{}/{}",
-            drive_num, doc_num, fiscal_sign
-        );
+        let url = format!("https://check.ofd.ru/rec/{drive_num}/{doc_num}/{fiscal_sign}",);
         log::info!("ofd.ru: fetching from {url}");
         let res = client
             .execute(client.get(url).build()?)
@@ -629,7 +626,7 @@ impl Provider for OfdRu {
         if let Some(provider) = {
             let x = super::registry()
                 .await
-                .by_id("", rec)
+                .default(rec)
                 .find(|x| x.id() != self.id());
             x
         } {
@@ -647,7 +644,7 @@ impl Provider for OfdRu {
         if let Some(provider) = {
             let x = super::registry()
                 .await
-                .by_id("", &rec)
+                .default(&rec)
                 .find(|x| x.id() != self.id());
             x
         } {

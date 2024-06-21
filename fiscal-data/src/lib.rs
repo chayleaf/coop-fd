@@ -176,6 +176,7 @@ pub struct VarFloat {
 }
 
 impl VarFloat {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -187,6 +188,7 @@ impl VarFloat {
         )?;
         Ok(())
     }
+    #[must_use]
     pub fn f64_approximation(&self) -> f64 {
         self.mantissa as f64 / 10.0f64.powi(self.dot_offset.into())
     }
@@ -300,7 +302,7 @@ impl<'de> Visitor<'de> for VarFloatVisitor {
     where
         E: serde::de::Error,
     {
-        VarFloat::try_from(v as f64).map_err(E::custom)
+        VarFloat::try_from(f64::from(v)).map_err(E::custom)
     }
     fn visit_i8<E>(self, v: i8) -> Result<Self::Value, E>
     where
@@ -380,6 +382,7 @@ type Data = Vec<u8>;
 pub struct Object(BTreeMap<u16, Vec<Data>>);
 
 impl Object {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -411,11 +414,9 @@ impl Object {
             .push(internal::into_data::<F>(x)?);
         Ok(())
     }
+    #[must_use]
     pub fn contains<F: Field>(&self) -> bool {
-        self.0
-            .get(&F::TAG)
-            .map(|x| !x.is_empty())
-            .unwrap_or_default()
+        self.0.get(&F::TAG).is_some_and(|x| !x.is_empty())
     }
     pub fn get<F: Field>(&self) -> Result<Option<F::Type>> {
         let Some(val) = self.0.get(&F::TAG) else {
@@ -434,8 +435,9 @@ impl Object {
             .map(|x| internal::from_data::<F>(x.clone()))
             .collect()
     }
+    #[must_use]
     pub fn contains_raw(&self, k: u16) -> bool {
-        self.0.get(&k).map(|x| !x.is_empty()).unwrap_or_default()
+        self.0.get(&k).is_some_and(|x| !x.is_empty())
     }
     pub fn set_raw(&mut self, k: u16, data: &[Data]) {
         self.0.insert(k, data.to_owned());
@@ -460,15 +462,12 @@ pub struct Document {
 }
 
 impl Document {
+    #[must_use]
     pub fn new(tag: u16) -> Self {
-        Self {
-            tag,
-            data: Object::default(),
-            message_fiscal_sign: None,
-            container_header: None,
-        }
+        Self::with_data(tag, Object::default())
     }
-    pub fn with_data(tag: u16, data: Object) -> Self {
+    #[must_use]
+    pub const fn with_data(tag: u16, data: Object) -> Self {
         Self {
             tag,
             data,
@@ -476,25 +475,31 @@ impl Document {
             message_fiscal_sign: None,
         }
     }
+    #[must_use]
     pub fn form_code(&self) -> enums::FormCode {
         self.tag().into()
     }
-    pub fn tag(&self) -> u16 {
+    #[must_use]
+    pub const fn tag(&self) -> u16 {
         self.tag
     }
     pub fn set_tag(&mut self, tag: u16) {
         self.tag = tag;
     }
+    #[must_use]
     pub fn into_data(self) -> Object {
         self.data
     }
-    pub fn data(&self) -> &Object {
+    #[must_use]
+    pub const fn data(&self) -> &Object {
         &self.data
     }
+    #[must_use]
     pub fn data_mut(&mut self) -> &mut Object {
         &mut self.data
     }
-    pub fn message_fiscal_sign(&self) -> Option<[u8; 8]> {
+    #[must_use]
+    pub const fn message_fiscal_sign(&self) -> Option<[u8; 8]> {
         self.message_fiscal_sign
     }
     pub fn remove_message_fiscal_sign(&mut self) {
@@ -503,6 +508,7 @@ impl Document {
     pub fn set_message_fiscal_sign(&mut self, message_fiscal_sign: [u8; 8]) {
         self.message_fiscal_sign = Some(message_fiscal_sign);
     }
+    #[must_use]
     pub fn container_header(&self) -> Option<&[u8]> {
         self.container_header.as_deref()
     }
@@ -547,9 +553,7 @@ impl TlvType for Document {
         let mut tag = [0u8, 0u8];
         cursor.read_exact(&mut tag).map_err(|_| Error::Eof)?;
         let tag = u16::from_le_bytes(tag);
-        let (container_header, tag) = if tag != 0xFFFF {
-            (None, tag)
-        } else {
+        let (container_header, tag) = if tag == 0xFFFF {
             let mut len = [0u8, 0u8];
             cursor.read_exact(&mut len).map_err(|_| Error::Eof)?;
             let len = u16::from_be_bytes(len);
@@ -558,6 +562,8 @@ impl TlvType for Document {
             let mut tag = [0u8, 0u8];
             cursor.read_exact(&mut tag).map_err(|_| Error::Eof)?;
             (Some(buf), u16::from_le_bytes(tag))
+        } else {
+            (None, tag)
         };
         let mut len = [0u8, 0u8];
         cursor.read_exact(&mut len).map_err(|_| Error::Eof)?;
@@ -641,9 +647,7 @@ impl<'a> fmt::Debug for DebugHelper<'a> {
                     return f.write_str("<missing tag 1>");
                 }
                 let tag = u16::from_le_bytes(tag);
-                let tag = if tag != 0xFFFF {
-                    tag
-                } else {
+                let tag = if tag == 0xFFFF {
                     let mut len = [0u8, 0u8];
                     if r.read_exact(&mut len).is_err() {
                         map.key(&"header");
@@ -662,6 +666,8 @@ impl<'a> fmt::Debug for DebugHelper<'a> {
                     let tag = u16::from_le_bytes(tag);
                     map.key(&"header");
                     map.value(&buf);
+                    tag
+                } else {
                     tag
                 };
                 map.key(&"tag");
@@ -734,7 +740,7 @@ impl TlvType for Vec<u8> {
 }
 impl TlvType for VarFloat {
     fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
-        let mut ret = VarFloat::new();
+        let mut ret = Self::new();
         ret.dot_offset = bytes.first().copied().ok_or(Error::Eof)?;
         let mut x = [0u8; mem::size_of::<u64>()];
         if bytes.len() > mem::size_of::<u64>() + 1 {
@@ -761,7 +767,7 @@ impl TlvType for u64 {
         Ok(Self::from_le_bytes(x))
     }
     fn into_bytes(self) -> Result<Vec<u8>> {
-        Ok(self.to_le_bytes()[..mem::size_of::<u64>() - self.leading_zeros() as usize / 8].into())
+        Ok(self.to_le_bytes()[..mem::size_of::<Self>() - self.leading_zeros() as usize / 8].into())
     }
 }
 impl TlvType for u32 {
@@ -774,7 +780,7 @@ impl TlvType for u32 {
         Ok(Self::from_le_bytes(x))
     }
     fn into_bytes(self) -> Result<Vec<u8>> {
-        (self as u64).into_bytes()
+        u64::from(self).into_bytes()
     }
 }
 impl TlvType for u16 {
@@ -787,7 +793,7 @@ impl TlvType for u16 {
         Ok(Self::from_le_bytes(x))
     }
     fn into_bytes(self) -> Result<Vec<u8>> {
-        (self as u64).into_bytes()
+        u64::from(self).into_bytes()
     }
 }
 impl TlvType for u8 {
@@ -800,7 +806,7 @@ impl TlvType for u8 {
         Ok(Self::from_le_bytes(x))
     }
     fn into_bytes(self) -> Result<Vec<u8>> {
-        (self as u64).into_bytes()
+        u64::from(self).into_bytes()
     }
 }
 impl TlvType for bool {
@@ -812,7 +818,7 @@ impl TlvType for bool {
         }
     }
     fn into_bytes(self) -> Result<Vec<u8>> {
-        (self as u64).into_bytes()
+        u64::from(self).into_bytes()
     }
 }
 impl TlvType for String {
@@ -835,7 +841,7 @@ impl TlvType for LocalTime {
         u32::from_bytes(bytes).map(Self)
     }
     fn into_bytes(self) -> Result<Vec<u8>> {
-        (self.0 as u64).into_bytes()
+        u64::from(self.0).into_bytes()
     }
 }
 impl TlvType for chrono::NaiveDateTime {
@@ -856,7 +862,7 @@ impl TlvType for chrono::NaiveDate {
 }
 impl TlvType for Object {
     fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
-        let mut ret = Object::new();
+        let mut ret = Self::new();
         let len = bytes.len();
         let mut cursor = io::Cursor::new(bytes);
         while cursor.position() != len as u64 {

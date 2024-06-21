@@ -28,7 +28,7 @@ fn parse_qr_date(s: &str) -> Result<chrono::NaiveDateTime, chrono::ParseError> {
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, QR_DATE_FORMAT2))
 }
 
-fn decode_hex_digit(c: u8) -> Option<u8> {
+const fn decode_hex_digit(c: u8) -> Option<u8> {
     match c {
         b'0'..=b'9' => Some(c - b'0'),
         b'A'..=b'F' => Some(c - b'A' + 10),
@@ -799,7 +799,7 @@ async fn main() {
             .and_then(|f| serde_json::from_slice::<State>(&f).ok())
             .unwrap_or_default();
         let (tx, mut rx) = mpsc::channel(32);
-        if let ReceiptFormatVersion::Json = state.receipt_version {
+        if matches!(state.receipt_version, ReceiptFormatVersion::Json) {
             tokio::spawn(legacy::migrate_json_to_ffd(config, tx));
         }
         while let Some(func) = rx.recv().await {
@@ -836,12 +836,10 @@ async fn main() {
                         "usernames": &config.usernames,
                         "ofds": ofd::registry()
                             .await
-                            .by_id
-                            .iter()
-                            .flat_map(|(k, v)| v.iter().map(|v| (k.clone(), v)))
-                            .filter(|(_, v)| !v.name().is_empty())
-                            .map(|(k, v)| liquid::object!({
-                                "id": k,
+                            .all()
+                            .filter(|v| !v.name().is_empty())
+                            .map(|v| liquid::object!({
+                                "id": v.id(),
                                 "name": format!("{} ({})", v.name(), v.url()),
                             }))
                             .collect::<Vec<liquid::Object>>(),
@@ -1032,12 +1030,11 @@ async fn main() {
                                                         }))
                                                         .unwrap_or_else(|err| format!("Error: {err}")),
                                                 ).into_response();
-                                            } else  {
-                                                serde_json::to_string(
-                                                    &balance,
-                                                )
-                                                .expect("balance serialization failed")
                                             }
+                                            serde_json::to_string(
+                                                &balance,
+                                            )
+                                            .expect("balance serialization failed")
                                         } else {
                                             "invalid amount".to_owned()
                                         }
@@ -1176,10 +1173,8 @@ async fn main() {
                             return axum::response::Html::from("invalid payment type".to_owned());
                         };
                         let invert = match payment_type {
-                            Some(PaymentType::Sale) => false,
-                            Some(PaymentType::Purchase) => true,
-                            Some(PaymentType::SaleReturn) => true,
-                            Some(PaymentType::PurchaseReturn) => false,
+                            Some(PaymentType::Sale | PaymentType::PurchaseReturn) => false,
+                            Some(PaymentType::Purchase | PaymentType::SaleReturn) => true,
                             _ => return axum::response::Html::from("invalid payment type".to_owned()),
                         };
                         let mut removed = Vec::<String>::new();
@@ -1413,11 +1408,9 @@ async fn main() {
                                         let i = rec.get::<fields::DocNum>().ok().flatten().unwrap_or_default();
                                         let payment_type = rec.get::<fields::PaymentType>().ok().flatten().unwrap_or_default();
                                         let invert = match payment_type {
-                                            PaymentType::Sale => false,
-                                            PaymentType::Purchase => true,
-                                            PaymentType::SaleReturn => true,
-                                            PaymentType::PurchaseReturn => false,
-                                            _ => return axum::response::Html::from("invalid payment type".to_owned()).into_response(),
+                                            PaymentType::Sale | PaymentType::PurchaseReturn => false,
+                                            PaymentType::Purchase | PaymentType::SaleReturn => true,
+                                            PaymentType::Unknown => return axum::response::Html::from("invalid payment type".to_owned()).into_response(),
                                         };
                                         let inv = |x: u64| if invert { -(x as i64) } else { x as i64 };
                                         let inv_f = |x: f64| if invert { -x } else { x };

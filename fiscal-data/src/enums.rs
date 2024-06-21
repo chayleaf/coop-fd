@@ -991,7 +991,7 @@ impl fmt::Display for Unit {
             Self::SquareMeter => "м²",
             Self::Milliliter => "мл",
             Self::Liter => "л",
-            Self::CubeMeter => "м²",
+            Self::CubeMeter => "м³",
             Self::KilowattHour => "кВ/ч",
             Self::Gigacalory => "гкал",
             Self::Day => "сут.",

@@ -60,10 +60,7 @@ pub mod one_or_many {
         where
             A: SeqAccess<'de>,
         {
-            let mut ret = seq
-                .size_hint()
-                .map(Vec::with_capacity)
-                .unwrap_or_else(Vec::new);
+            let mut ret = seq.size_hint().map_or_else(Vec::new, Vec::with_capacity);
             while let Some(x) = seq.next_element()? {
                 ret.push(x);
             }
@@ -502,7 +499,7 @@ pub mod marking_code_base64_opt {
         Deserializer, Serializer,
     };
 
-    fn decode_hex_digit(c: u8) -> Option<u8> {
+    const fn decode_hex_digit(c: u8) -> Option<u8> {
         match c {
             b'0'..=b'9' => Some(c - b'0'),
             b'A'..=b'F' => Some(c - b'A' + 10),
@@ -2779,6 +2776,7 @@ pub enum Document {
 }
 
 impl Document {
+    #[must_use]
     pub fn raw_data(&self) -> Option<&[u8]> {
         match self {
             Self::FiscalReport(x) => x.raw_data.as_deref(),

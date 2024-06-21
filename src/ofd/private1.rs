@@ -54,8 +54,7 @@ impl Provider for Private1 {
         rec.get::<fields::PaymentType>()
             .ok()
             .flatten()
-            .map(|x| x == PaymentType::Sale)
-            .unwrap_or(true)
+            .map_or(true, |x| x == PaymentType::Sale)
     }
     async fn fetch_raw_data(
         &self,

@@ -185,7 +185,7 @@ impl Provider for Astral {
         if let Some(provider) = {
             let x = super::registry()
                 .await
-                .by_id("", rec)
+                .default(rec)
                 .find(|x| x.id() != self.id());
             x
         } {
@@ -200,7 +200,7 @@ impl Provider for Astral {
         let parsed = if let Some(provider) = {
             let x = super::registry()
                 .await
-                .by_id("", &rec)
+                .default(&rec)
                 .find(|x| x.id() != self.id());
             x
         } {

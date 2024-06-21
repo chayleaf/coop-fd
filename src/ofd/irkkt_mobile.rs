@@ -25,15 +25,11 @@ impl IrkktMobileAuth {
                     .await
                     .unwrap();
                 RwLock::new(
-                    if let Some(auth) = tokio::fs::read(&self.0)
+                    tokio::fs::read(&self.0)
                         .await
                         .ok()
                         .and_then(|data| serde_json::from_slice(&data).ok())
-                    {
-                        auth
-                    } else {
-                        Auth::default()
-                    },
+                        .unwrap_or_default(),
                 )
             })
             .await
@@ -159,7 +155,7 @@ impl IrkktMobile {
             )),
         }
     }
-    async fn client(&self) -> Result<reqwest::Client, Error> {
+    fn client(&self) -> Result<reqwest::Client, Error> {
         Ok(reqwest::ClientBuilder::new()
             .default_headers({
                 let mut headers = reqwest::header::HeaderMap::new();
@@ -177,7 +173,7 @@ impl IrkktMobile {
             .build()?)
     }
     async fn try_fetch(&self, req: reqwest::Request) -> Result<reqwest::Response, Error> {
-        let client = self.client().await?;
+        let client = self.client()?;
         let mut req1 = Some(req);
         for _ in 0..2 {
             let auth = self.auth.get().await;
@@ -334,7 +330,7 @@ impl Provider for IrkktMobile {
             .get::<fields::DocFiscalSign>()?
             .ok_or(Error::MissingData("fiscalSign"))?;
         let fiscal_sign = u32::from_be_bytes([a, b, c, d]).to_string();
-        let client = self.client().await?;
+        let client = self.client()?;
         let req = client
             .post(format!("{}/v2/ticket", self.api_base))
             .json(&TicketRequest {
@@ -413,7 +409,7 @@ impl Provider for IrkktMobile {
                                 .filter(|x| matches!(x, '0'..='9' | '+'))
                                 .collect();
                             let res: Result<(), Error> = async {
-                                let client = this.client().await?;
+                                let client = this.client()?;
                                 if f.code.is_empty() {
                                     let res = client
                                         .execute(
@@ -487,7 +483,7 @@ impl Provider for IrkktMobile {
         //                 async move {
         //                     let res: Result<_, Error> = {
         //                         async {
-        //                             let client = this.client().await?;
+        //                             let client = this.client()?;
         //                             Ok(client
         //                                 .execute(
         //                                     client

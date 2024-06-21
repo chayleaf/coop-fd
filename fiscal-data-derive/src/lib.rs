@@ -88,7 +88,7 @@ fn derive_ffd2(doc: bool, input: TokenStream) -> TokenStream {
     let mut init_fields = TokenStream::new();
     let mut set_fields = TokenStream::new();
     let mut set_doc_fields = TokenStream::new();
-    for (name, info) in fields.into_iter() {
+    for (name, info) in fields {
         let is_option = info.ty.to_token_stream().to_string().starts_with("Option ");
         let is_vec = info.ty.to_token_stream().to_string().starts_with("Vec ")
             && !info.ty.to_token_stream().to_string().contains(" u8 ");
@@ -140,7 +140,7 @@ fn derive_ffd2(doc: bool, input: TokenStream) -> TokenStream {
                         if let Some(x) = self.#name {
                             obj.set::<#path>(x.try_into()?)?;
                         }
-                    })
+                    });
                 } else if is_vec {
                     init_fields.extend(quote! {
                         #name: obj.get_all::<#path>()?.into_iter().map(|x| x.try_into()).collect::<Result<_, _>>()?,
@@ -149,19 +149,19 @@ fn derive_ffd2(doc: bool, input: TokenStream) -> TokenStream {
                         for x in self.#name {
                             obj.push::<#path>(x.try_into()?)?;
                         }
-                    })
+                    });
                 } else {
                     init_fields.extend(quote! {
                         #name: obj.get::<#path>()?.ok_or(fiscal_data::Error::InvalidFormat)?.try_into()?,
                     });
                     set_fields.extend(quote! {
                         obj.set::<#path>(self.#name.try_into()?)?;
-                    })
+                    });
                 }
             }
         }
     }
-    let w = Ident::new(&format!("_ffd_impl_{}", name), name.span());
+    let w = Ident::new(&format!("_ffd_impl_{name}"), name.span());
     let (impl_gen, ty_gen, wher) = input.generics.split_for_impl();
     let ty = if doc {
         syn::parse_str::<Ident>("Document")

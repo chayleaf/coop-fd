@@ -137,7 +137,7 @@ impl Provider for Taxcom {
         if let Some(provider) = {
             let x = super::registry()
                 .await
-                .by_id("", rec)
+                .default(rec)
                 .find(|x| x.id() != self.id());
             x
         } {
@@ -155,7 +155,7 @@ impl Provider for Taxcom {
         if let Some(provider) = {
             let x = super::registry()
                 .await
-                .by_id("", &rec)
+                .default(&rec)
                 .find(|x| x.id() != self.id());
             x
         } {

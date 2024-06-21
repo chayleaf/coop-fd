@@ -130,7 +130,7 @@ pub(crate) trait Provider: Send + Sync {
 }
 
 pub struct OfdRegistry {
-    pub(crate) by_id: BTreeMap<String, Vec<&'static dyn Provider>>,
+    by_id: BTreeMap<String, Vec<&'static dyn Provider>>,
     all: Vec<&'static dyn Provider>,
 }
 
@@ -169,6 +169,27 @@ impl OfdRegistry {
         self.by_id.entry(ofd.id().to_owned()).or_default().push(ofd);
         self.all.push(ofd);
     }
+    pub fn default<'a>(
+        &'a self,
+        rec: &'a Object,
+    ) -> impl 'a + Iterator<Item = &'static dyn Provider> {
+        self.by_id
+            .get("private1")
+            .into_iter()
+            .flatten()
+            .copied()
+            .chain(
+                self.by_id
+                    .get("irkkt-mobile")
+                    .into_iter()
+                    .flatten()
+                    .copied(),
+            )
+            .filter(move |x| x.condition(rec))
+    }
+    pub fn all(&self) -> impl '_ + Iterator<Item = &'static dyn Provider> {
+        self.all.iter().copied()
+    }
     pub fn by_id<'a>(
         &'a self,
         id: &str,
@@ -179,14 +200,7 @@ impl OfdRegistry {
             .into_iter()
             .flatten()
             .copied()
-            .chain(self.by_id.get("private1").into_iter().flatten().copied())
-            .chain(
-                self.by_id
-                    .get("irkkt-mobile")
-                    .into_iter()
-                    .flatten()
-                    .copied(),
-            )
+            .chain(self.default(rec))
             .chain(self.all.iter().copied())
             .filter(move |x| x.condition(rec))
     }
