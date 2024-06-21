@@ -134,10 +134,14 @@ impl Provider for Taxcom {
         }
         let data = res.bytes().await?;
         parse(&data, rec)?;
-        if let Some(provider) = super::registry().await.by_id("", rec) {
-            if provider.id() != self.id() {
-                super::fetch_raw(config, provider, rec, false).await?;
-            }
+        if let Some(provider) = {
+            let x = super::registry()
+                .await
+                .by_id("", rec)
+                .find(|x| x.id() != self.id());
+            x
+        } {
+            super::fetch_raw(config, provider, rec, false).await?;
         }
         Ok(data.to_vec())
     }
@@ -148,12 +152,14 @@ impl Provider for Taxcom {
         mut rec: Object,
     ) -> Result<fiscal_data::Document, Error> {
         parse(data, &mut rec)?;
-        if let Some(provider) = super::registry().await.by_id("", &rec) {
-            if provider.id() != self.id() {
-                super::fetch2(config, provider, rec).await
-            } else {
-                Err(Error::MissingData("provider"))
-            }
+        if let Some(provider) = {
+            let x = super::registry()
+                .await
+                .by_id("", &rec)
+                .find(|x| x.id() != self.id());
+            x
+        } {
+            super::fetch2(config, provider, rec).await
         } else {
             Err(Error::MissingData("provider"))
         }

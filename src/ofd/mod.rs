@@ -169,20 +169,31 @@ impl OfdRegistry {
         self.by_id.entry(ofd.id().to_owned()).or_default().push(ofd);
         self.all.push(ofd);
     }
-    pub fn by_id(&self, id: &str, rec: &Object) -> Option<&dyn Provider> {
+    pub fn by_id<'a>(
+        &'a self,
+        id: &str,
+        rec: &'a Object,
+    ) -> impl 'a + Iterator<Item = &'static dyn Provider> {
         self.by_id
             .get(id)
             .into_iter()
             .flatten()
             .copied()
             .chain(self.by_id.get("private1").into_iter().flatten().copied())
-            .chain(self.by_id.get("irkkt-mobile").into_iter().flatten().copied())
+            .chain(
+                self.by_id
+                    .get("irkkt-mobile")
+                    .into_iter()
+                    .flatten()
+                    .copied(),
+            )
             .chain(self.all.iter().copied())
-            .find(|x| x.condition(rec))
+            .filter(move |x| x.condition(rec))
     }
     pub fn fill(&self, id: &str, rec: &mut Object) -> fiscal_data::Result<&dyn Provider> {
         let ofd = self
             .by_id(id, rec)
+            .next()
             .ok_or(fiscal_data::Error::InvalidFormat)?;
         rec.push::<custom::ProviderId>(ofd.id().to_owned())?;
         Ok(ofd)
@@ -278,6 +289,7 @@ pub(crate) async fn fetch(config: &Config, rec: Object) -> Result<Document, Erro
     let provider = registry()
         .await
         .by_id(&rec.get::<custom::ProviderId>()?.unwrap_or_default(), &rec)
+        .next()
         .ok_or(Error::MissingData("provider"))?;
     let ret = fetch2(config, provider, rec).await?;
     let drive_num = ret

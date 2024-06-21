@@ -69,7 +69,13 @@ impl Provider for Icom24 {
         }
         let (_, params) = res.url.split_once('?').ok_or(Error::ParseError)?;
         fill_missing_fields(rec, &parse_qr(params).await);
-        if let Some(provider) = super::registry().await.by_id("taxcom", rec) {
+        if let Some(provider) = {
+            let x = super::registry()
+                .await
+                .by_id("taxcom", rec)
+                .find(|x| x.id() != self.id());
+            x
+        } {
             super::fetch_raw(config, provider, rec, false).await?;
         }
         Ok(ret)
@@ -87,12 +93,14 @@ impl Provider for Icom24 {
         let (_, params) = res.url.split_once('?').ok_or(Error::ParseError)?;
         fill_missing_fields(&mut rec, &parse_qr(params).await);
         super::registry().await.fill("taxcom", &mut rec)?;
-        if let Some(provider) = super::registry().await.by_id("taxcom", &rec) {
-            if provider.id() != self.id() {
-                super::fetch2(config, provider, rec).await
-            } else {
-                Err(Error::MissingData("provider"))
-            }
+        if let Some(provider) = {
+            let x = super::registry()
+                .await
+                .by_id("taxcom", &rec)
+                .find(|x| x.id() != self.id());
+            x
+        } {
+            super::fetch2(config, provider, rec).await
         } else {
             Err(Error::MissingData("provider"))
         }
