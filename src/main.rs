@@ -780,7 +780,7 @@ async fn main() {
                 .unwrap();
             tokio::fs::set_permissions(
                 config.data_path("secret"),
-                std::fs::Permissions::from_mode(0o640),
+                std::fs::Permissions::from_mode(0o750),
             )
             .await
             .unwrap();
@@ -1475,7 +1475,7 @@ async fn main() {
                                         .unwrap_or_else(|err| format!("Error: {err}"))
                                     }
                                     Err(ofd::Error::Redirect(url)) => {
-                                        return axum::response::Redirect::temporary(&url).into_response();
+                                        return axum::response::Redirect::to(&url).into_response();
                                     }
                                     Err(err) => {
                                         log::error!("ofd fetch failed: {err}");

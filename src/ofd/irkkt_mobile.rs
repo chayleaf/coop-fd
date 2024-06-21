@@ -2,6 +2,7 @@ use std::{io, path::PathBuf, sync::Arc};
 
 use crate::Config;
 use async_trait::async_trait;
+use axum::response::IntoResponse;
 use fiscal_data::fields;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{OnceCell, RwLock};
@@ -253,7 +254,7 @@ impl IrkktMobile {
         //     ),
         // );
         // Err(Error::Redirect(url))
-        Err(Error::Redirect("/ofd/irkkt-mobile/auth".to_owned()))
+        Err(Error::Redirect("ofd/irkkt-mobile/auth".to_owned()))
     }
 }
 
@@ -374,35 +375,16 @@ impl Provider for IrkktMobile {
             .filter(crate::CEscapeFilter)
             .build()
             .unwrap();
-        let (auth_t, redirect_t) = tokio::join!(
-            async {
-                Arc::new(
-                    parser
-                        .parse(
-                            &tokio::fs::read_to_string("templates/irkkt-mobile/auth.html")
-                                .await
-                                .unwrap_or_else(|_| {
-                                    include_str!("../../templates/irkkt-mobile/auth.html")
-                                        .to_owned()
-                                }),
-                        )
-                        .unwrap_or_else(|err| panic!("irkkt_auth:\n{err}")),
+        let auth_t = Arc::new(
+            parser
+                .parse(
+                    &tokio::fs::read_to_string("templates/irkkt-mobile/auth.html")
+                        .await
+                        .unwrap_or_else(|_| {
+                            include_str!("../../templates/irkkt-mobile/auth.html").to_owned()
+                        }),
                 )
-            },
-            async {
-                Arc::new(
-                    parser
-                        .parse(
-                            &tokio::fs::read_to_string("templates/irkkt-mobile/redirect.html")
-                                .await
-                                .unwrap_or_else(|_| {
-                                    include_str!("../../templates/irkkt-mobile/redirect.html")
-                                        .to_owned()
-                                }),
-                        )
-                        .unwrap_or_else(|err| panic!("redirect:\n{err}")),
-                )
-            },
+                .unwrap_or_else(|err| panic!("irkkt_auth:\n{err}")),
         );
         router
             .route(
@@ -480,19 +462,19 @@ impl Provider for IrkktMobile {
                                 Ok(())
                             }
                             .await;
-                            axum::response::Html::from(match res {
-                                Ok(()) => redirect_t
-                                    .render(&liquid::object!({ "url": if is_auth {
-                                        "../../.."
-                                    } else {
-                                        "../auth"
-                                    }}))
-                                    .unwrap_or_else(|err| format!("Error: {err}")),
+                            match res {
+                                Ok(()) => axum::response::Redirect::to(if is_auth {
+                                    "../../.."
+                                } else {
+                                    "../auth"
+                                })
+                                .into_response(),
                                 Err(err) => {
                                     log::error!("irkkt mobile phone error: {err}");
-                                    format!("Error: {err}")
+                                    axum::response::Html::from(format!("Error: {err}"))
+                                        .into_response()
                                 }
-                            })
+                            }
                         }
                     },
                 ),
@@ -543,7 +525,7 @@ impl Provider for IrkktMobile {
         //                             refresh_token,
         //                         })
         //                         .await;
-        //                     axum::response::Redirect::temporary("/").into_response()
+        //                     axum::response::Redirect::to("/").into_response()
         //                 }
         //             },
         //         ),
