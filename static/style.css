@@ -115,6 +115,7 @@ input[type=reset] {
   border-style: solid;
 }
 input[type=text],
+input[type=tel],
 input[type=number],
 input[type=date],
 select,

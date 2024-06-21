@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 
 use fiscal_data::{
+    enums::PaymentType,
     fields,
     json::{
         Bso, BsoCorrection, CloseArchive, CloseShift, CurrentStateReport, FiscalReport,
@@ -48,6 +49,13 @@ impl Provider for Private1 {
     }
     fn exts(&self) -> &'static [&'static str] {
         &["json"]
+    }
+    fn condition(&self, rec: &fiscal_data::Object) -> bool {
+        rec.get::<fields::PaymentType>()
+            .ok()
+            .flatten()
+            .map(|x| x == PaymentType::Sale)
+            .unwrap_or(true)
     }
     async fn fetch_raw_data(
         &self,

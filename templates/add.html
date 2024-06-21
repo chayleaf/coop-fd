@@ -16,6 +16,9 @@
   {% if is_advance %}
   <h1>Не разделяйте сумму предоплаты, эта сумма может измениться! После получения товаров вам должен прийти новый чек.</h1>
   {% endif %}
+  {% if is_refund %}
+  <h1>Чек возврата.</h1>
+  {% endif %}
   <form action="submit" method="post">
     <input type="hidden" name="fn" value="{{ fn | escape }}"></input>
     <input type="hidden" name="i" value="{{ i | escape }}"></input>

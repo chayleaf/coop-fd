@@ -58,6 +58,18 @@
                 type = lib.types.path;
                 default = "/var/lib/coop-fd";
               };
+              options.irkkt_mobile_client_secret = lib.mkOption {
+                type = with lib.types; nullOr str;
+                default = null;
+              };
+              options.irkkt_mobile_device_id = lib.mkOption {
+                type = with lib.types; nullOr str;
+                default = null;
+              };
+              options.irkkt_mobile_api_base = lib.mkOption {
+                type = with lib.types; nullOr str;
+                default = null;
+              };
               options.private1_endpoint = lib.mkOption {
                 type = with lib.types; nullOr str;
                 default = null;

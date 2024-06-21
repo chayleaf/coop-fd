@@ -182,7 +182,7 @@ impl Provider for Astral {
                 return Err(Error::MissingData("result"));
             }
         }
-        if let Some(provider) = super::registry().by_id("") {
+        if let Some(provider) = super::registry().await.by_id("", rec) {
             if provider.id() != self.id() {
                 let _ = super::fetch_raw(config, provider, rec, false).await;
             }
@@ -193,7 +193,7 @@ impl Provider for Astral {
         let res = serde_json::from_slice::<Response>(data)?;
         let res = res.result.ok_or(Error::MissingData("result"))?;
         let doc = res.doc.ok_or(Error::MissingData("doc"))?;
-        let parsed = if let Some(provider) = super::registry().by_id("") {
+        let parsed = if let Some(provider) = super::registry().await.by_id("", &rec) {
             if provider.id() != self.id() {
                 super::fetch2(config, provider, rec).await.ok()
             } else {

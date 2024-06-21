@@ -476,6 +476,9 @@ impl Document {
             message_fiscal_sign: None,
         }
     }
+    pub fn form_code(&self) -> enums::FormCode {
+        self.tag().into()
+    }
     pub fn tag(&self) -> u16 {
         self.tag
     }

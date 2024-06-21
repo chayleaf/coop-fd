@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     io,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -63,12 +64,12 @@ fn parse_sum(s: &str) -> Option<u64> {
     }
 }
 
-fn parse_qr(s: &str) -> Object {
+async fn parse_qr(s: &str) -> Object {
     let mut ret = Object::new();
     for (k, v) in s.split('&').filter_map(|x| x.split_once('=')) {
         match k {
             "ofd" => {
-                let _ = ofd::registry().fill(v, &mut ret);
+                let _ = ofd::registry().await.fill(v, &mut ret);
             }
             "date" => {
                 if let Ok(x) = chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d") {
@@ -307,6 +308,11 @@ impl Transaction {
         *self.balance_changes.entry(src.to_owned()).or_default() -= cnt;
         *self.balance_changes.entry(dst.to_owned()).or_default() += cnt;
     }
+    pub fn invert(&mut self) {
+        for val in self.balance_changes.values_mut() {
+            *val = -*val;
+        }
+    }
     pub fn finalize(&mut self) {
         self.balance_changes.retain(|_, v| *v != 0);
     }
@@ -376,6 +382,13 @@ struct Config {
     listener: String,
     data_path: PathBuf,
     ignore_qr_condition: String,
+    // public_url: String,
+    #[serde(default)]
+    irkkt_mobile_client_secret: Option<String>,
+    #[serde(default)]
+    irkkt_mobile_device_id: Option<String>,
+    #[serde(default)]
+    irkkt_mobile_api_base: Option<String>,
     #[serde(default)]
     private1_endpoint: Option<String>,
 }
@@ -678,10 +691,7 @@ async fn main() {
                     .await
                     .expect("failed to read transaction");
                 let tr = serde_json::from_slice::<Transaction>(&data).unwrap_or_else(|_| {
-                    panic!(
-                        "failed to deserialize transaction {}",
-                        file.display()
-                    )
+                    panic!("failed to deserialize transaction {}", file.display())
                 });
                 match tr.meta {
                     Some(TransactionMeta::Receipt { r#fn, i, paid: _ }) => {
@@ -727,13 +737,13 @@ async fn main() {
                 let data = tokio::fs::read(file.path())
                     .await
                     .expect("failed to read ffd");
-                let rec = Document::from_bytes(data).unwrap_or_else(|err| {
+                let doc = Document::from_bytes(data).unwrap_or_else(|err| {
                     panic!(
                         "failed to deserialize receipt {}: {err}",
                         file.path().display()
                     )
                 });
-                let rec = rec.data();
+                let rec = doc.data();
                 let date = rec.get::<fields::DateTime>().ok().flatten();
                 for item in rec.get_all::<fields::ReceiptItem>().unwrap_or_default() {
                     let name = item
@@ -764,9 +774,21 @@ async fn main() {
                 }
             }
         },
+        async {
+            tokio::fs::create_dir_all(config.data_path("secret"))
+                .await
+                .unwrap();
+            tokio::fs::set_permissions(
+                config.data_path("secret"),
+                std::fs::Permissions::from_mode(0o640),
+            )
+            .await
+            .unwrap();
+        },
     );
 
-    ofd::init_registry(config);
+    let mut app = axum::Router::new();
+    ofd::init_registry(config, &mut app).await;
 
     // state actor
     tokio::spawn(async {
@@ -788,7 +810,7 @@ async fn main() {
         }
     });
 
-    let app = axum::Router::new()
+    let app = app
         .route(
             "/",
             axum::routing::get(|| {
@@ -813,8 +835,10 @@ async fn main() {
                         "extra_qr_processing": format!("if({})return;", config.ignore_qr_condition),
                         "usernames": &config.usernames,
                         "ofds": ofd::registry()
+                            .await
                             .by_id
                             .iter()
+                            .flat_map(|(k, v)| v.iter().map(|v| (k.clone(), v)))
                             .filter(|(_, v)| !v.name().is_empty())
                             .map(|(k, v)| liquid::object!({
                                 "id": k,
@@ -1144,12 +1168,22 @@ async fn main() {
                             log::error!("missing {path:?}");
                             return axum::response::Html::from("missing receipt cache 1".to_owned());
                         };
-                        let Ok(rec) = Document::from_bytes(data) else {
+                        let Ok(doc) = Document::from_bytes(data) else {
                             return axum::response::Html::from("invalid receipt cache 2".to_owned());
                         };
-                        let rec = rec.data();
+                        let rec = doc.data();
+                        let Ok(payment_type) = rec.get::<fields::PaymentType>() else {
+                            return axum::response::Html::from("invalid payment type".to_owned());
+                        };
+                        let invert = match payment_type {
+                            Some(PaymentType::Sale) => false,
+                            Some(PaymentType::Purchase) => true,
+                            Some(PaymentType::SaleReturn) => true,
+                            Some(PaymentType::PurchaseReturn) => false,
+                            _ => return axum::response::Html::from("invalid payment type".to_owned()),
+                        };
                         let mut removed = Vec::<String>::new();
-                        {
+                        if !invert {
                             let mut list = list.write().await;
                             list.retain_mut(|list_item| {
                                 let lower = list_item.name.to_lowercase();
@@ -1229,6 +1263,9 @@ async fn main() {
                                 }
                             }
                         }
+                        if invert {
+                            tr.invert();
+                        }
                         tr.finalize();
                         let balance = add_transaction(config, tr).await;
                         let date = rec.get::<fields::DateTime>().ok().flatten();
@@ -1306,7 +1343,7 @@ async fn main() {
                                 .get("username")
                                 .map(axum_extra::extract::cookie::Cookie::value)
                             {
-                                let mut rec = parse_qr(&q);
+                                let mut rec = parse_qr(&q).await;
                                 if !rec.contains::<fields::DriveNum>()
                                     || !rec.contains::<fields::DocNum>()
                                     || !rec.contains::<fields::DocFiscalSign>() && q.starts_with("http")
@@ -1374,11 +1411,22 @@ async fn main() {
                                         let rec = doc.data();
                                         let r#fn = rec.get::<fields::DriveNum>().ok().flatten().unwrap_or_default();
                                         let i = rec.get::<fields::DocNum>().ok().flatten().unwrap_or_default();
+                                        let payment_type = rec.get::<fields::PaymentType>().ok().flatten().unwrap_or_default();
+                                        let invert = match payment_type {
+                                            PaymentType::Sale => false,
+                                            PaymentType::Purchase => true,
+                                            PaymentType::SaleReturn => true,
+                                            PaymentType::PurchaseReturn => false,
+                                            _ => return axum::response::Html::from("invalid payment type".to_owned()).into_response(),
+                                        };
+                                        let inv = |x: u64| if invert { -(x as i64) } else { x as i64 };
+                                        let inv_f = |x: f64| if invert { -x } else { x };
                                         add_t.render(&liquid::object!({
                                             "total": rec.get::<fields::TotalSum>().ok().flatten().unwrap_or_default(),
                                             "username": username,
                                             "already_paid": paid_receipts.contains(&format!("{fn}_{i:07}")),
                                             "is_advance": is_advance(rec).unwrap_or_default(),
+                                            "is_refund": invert,
                                             "fn": r#fn,
                                             "i": i,
                                             "items": rec.get_all::<fields::ReceiptItem>().unwrap_or_default().into_iter().enumerate().map(|(i, item)| {
@@ -1394,6 +1442,7 @@ async fn main() {
                                                         .get::<fields::ItemQuantity>()
                                                         .ok()
                                                         .flatten()
+                                                        .map(|x| inv_f(x.f64_approximation()))
                                                         .unwrap_or_default(),
                                                     "unit": item
                                                         .get::<fields::Unit>()
@@ -1411,17 +1460,22 @@ async fn main() {
                                                         .get::<fields::ItemUnitPrice>()
                                                         .ok()
                                                         .flatten()
+                                                        .map(inv)
                                                         .unwrap_or_default(),
                                                     "total": item
                                                         .get::<fields::ItemTotalPrice>()
                                                         .ok()
                                                         .flatten()
+                                                        .map(inv)
                                                         .unwrap_or_default(),
                                                 })
                                             }).collect::<Vec<_>>(),
                                             "usernames": &config.usernames,
                                         }))
                                         .unwrap_or_else(|err| format!("Error: {err}"))
+                                    }
+                                    Err(ofd::Error::Redirect(url)) => {
+                                        return axum::response::Redirect::temporary(&url).into_response();
                                     }
                                     Err(err) => {
                                         log::error!("ofd fetch failed: {err}");
@@ -1433,7 +1487,7 @@ async fn main() {
                             }
                         } else {
                             "missing qr info".to_owned()
-                        })
+                        }).into_response()
                     }
                 },
             ),

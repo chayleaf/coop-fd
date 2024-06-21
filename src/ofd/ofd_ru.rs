@@ -626,7 +626,7 @@ impl Provider for OfdRu {
             };
         }
         rec.set::<super::custom::Id>(id.to_owned())?;
-        if let Some(provider) = super::registry().by_id("") {
+        if let Some(provider) = super::registry().await.by_id("", rec) {
             if provider.id() != self.id() {
                 let _ = super::fetch_raw(config, provider, rec, false).await;
             }
@@ -640,7 +640,7 @@ impl Provider for OfdRu {
         rec: Object,
     ) -> Result<fiscal_data::Document, Error> {
         let res = serde_json::from_slice::<Res>(data)?;
-        if let Some(provider) = super::registry().by_id("") {
+        if let Some(provider) = super::registry().await.by_id("", &rec) {
             if let Ok(mut doc) = super::fetch2(config, provider, rec).await {
                 if let Ok(fiscal_sign) = <[u8; 6]>::try_from(&res.document.FiscalSign[..])
                     .or_else(|_| <[u8; 6]>::try_from(&res.doc_fiscal_sign[..]))

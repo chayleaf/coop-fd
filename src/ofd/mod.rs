@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use fiscal_data::{fields, Document, Object, TlvType};
-use std::{collections::BTreeMap, io, sync::OnceLock};
+use std::{collections::BTreeMap, io};
 use thiserror::Error;
+use tokio::sync::OnceCell;
 
 use crate::Config;
 
@@ -39,6 +40,7 @@ mod astral;
 // mod beeline;
 // json, close to fns (changed user -> client_name, ФПС is 0)
 // mod eofd;
+mod irkkt_mobile;
 // not an OFD, just a provider that returns a single URL
 mod icom24;
 // html
@@ -63,6 +65,12 @@ pub enum Error {
         reqwest::Error,
     ),
     #[error("{0}")]
+    ReqwestHeaderValue(
+        #[source]
+        #[from]
+        reqwest::header::InvalidHeaderValue,
+    ),
+    #[error("{0}")]
     Io(
         #[source]
         #[from]
@@ -74,6 +82,9 @@ pub enum Error {
         #[from]
         fiscal_data::Error,
     ),
+    #[error("{0}")]
+    #[allow(unused)]
+    Custom(String),
     #[error("{0}")]
     Json(
         #[source]
@@ -88,6 +99,8 @@ pub enum Error {
     #[allow(dead_code)]
     #[error("no response")]
     NoResponse,
+    #[error("redirect to {0}")]
+    Redirect(String),
 }
 
 #[async_trait]
@@ -108,54 +121,84 @@ pub(crate) trait Provider: Send + Sync {
             .ok_or(Error::MissingData("fd"))?;
         Ok(format!("{drive_num}_{doc_num:07}"))
     }
+    async fn register(&self, router: axum::Router) -> axum::Router {
+        router
+    }
+    fn condition(&self, _rec: &Object) -> bool {
+        true
+    }
 }
 
 pub struct OfdRegistry {
-    pub(crate) by_id: BTreeMap<String, &'static dyn Provider>,
+    pub(crate) by_id: BTreeMap<String, Vec<&'static dyn Provider>>,
     all: Vec<&'static dyn Provider>,
 }
 
 impl OfdRegistry {
-    pub fn new(c: &Config) -> Self {
+    pub async fn new(c: &Config, router: &mut axum::Router) -> Self {
         let mut ret = Self {
             by_id: BTreeMap::new(),
             all: Vec::new(),
         };
         if let Some(endpoint) = &c.private1_endpoint {
-            ret.add(private1::Private1::new(endpoint));
+            ret.add(private1::Private1::new(endpoint), router).await;
         }
-        ret.add(astral::Astral);
-        ret.add(icom24::Icom24);
-        ret.add(ofd_ru::OfdRu);
-        ret.add(taxcom::Taxcom);
+        if let Some(((client_secret, device_id), api_base)) = c
+            .irkkt_mobile_client_secret
+            .as_ref()
+            .zip(c.irkkt_mobile_device_id.as_ref())
+            .zip(c.irkkt_mobile_api_base.as_ref())
+        {
+            ret.add(
+                irkkt_mobile::IrkktMobile::new(c, client_secret, device_id, api_base),
+                router,
+            )
+            .await;
+        }
+        ret.add(astral::Astral, router).await;
+        ret.add(icom24::Icom24, router).await;
+        ret.add(ofd_ru::OfdRu, router).await;
+        ret.add(taxcom::Taxcom, router).await;
         ret
     }
-    pub fn add(&mut self, ofd: impl Provider + 'static) {
+    pub async fn add(&mut self, ofd: impl Provider + 'static, router: &mut axum::Router) {
+        let mut tmp = axum::Router::new();
+        std::mem::swap(&mut tmp, router);
+        *router = ofd.register(tmp).await;
         let ofd = Box::leak(Box::new(ofd));
-        self.by_id.insert(ofd.id().to_owned(), ofd);
+        self.by_id.entry(ofd.id().to_owned()).or_default().push(ofd);
         self.all.push(ofd);
     }
-    pub fn by_id(&self, id: &str) -> Option<&dyn Provider> {
+    pub fn by_id(&self, id: &str, rec: &Object) -> Option<&dyn Provider> {
         self.by_id
             .get(id)
-            .or_else(|| self.by_id.get("private1"))
-            .or_else(|| self.all.first())
+            .into_iter()
+            .flatten()
             .copied()
+            .chain(self.by_id.get("private1").into_iter().flatten().copied())
+            .chain(self.by_id.get("irkkt-mobile").into_iter().flatten().copied())
+            .chain(self.all.iter().copied())
+            .find(|x| x.condition(rec))
     }
     pub fn fill(&self, id: &str, rec: &mut Object) -> fiscal_data::Result<&dyn Provider> {
-        let ofd = self.by_id(id).ok_or(fiscal_data::Error::InvalidFormat)?;
+        let ofd = self
+            .by_id(id, rec)
+            .ok_or(fiscal_data::Error::InvalidFormat)?;
         rec.push::<custom::ProviderId>(ofd.id().to_owned())?;
         Ok(ofd)
     }
 }
 
-static REG: OnceLock<OfdRegistry> = OnceLock::new();
-pub fn init_registry(config: &'static Config) {
-    REG.set(OfdRegistry::new(config))
+static REG: OnceCell<OfdRegistry> = OnceCell::const_new();
+pub async fn init_registry(config: &'static Config, router: &mut axum::Router) {
+    REG.set(OfdRegistry::new(config, router).await)
         .unwrap_or_else(|_| panic!());
 }
-pub fn registry() -> &'static OfdRegistry {
-    REG.get_or_init(|| OfdRegistry::new(&Config::default()))
+pub async fn registry() -> &'static OfdRegistry {
+    REG.get_or_init(|| async {
+        OfdRegistry::new(&Config::default(), &mut axum::Router::new()).await
+    })
+    .await
 }
 pub fn fill_missing_fields(a: &mut Object, b: &Object) {
     for (k, v) in b.iter_raw() {
@@ -233,7 +276,8 @@ async fn fetch2<P: Provider + ?Sized>(
 }
 pub(crate) async fn fetch(config: &Config, rec: Object) -> Result<Document, Error> {
     let provider = registry()
-        .by_id(&rec.get::<custom::ProviderId>()?.unwrap_or_default())
+        .await
+        .by_id(&rec.get::<custom::ProviderId>()?.unwrap_or_default(), &rec)
         .ok_or(Error::MissingData("provider"))?;
     let ret = fetch2(config, provider, rec).await?;
     let drive_num = ret
