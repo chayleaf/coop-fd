@@ -13,7 +13,6 @@ struct SentMessage {
 }
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, Hash, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
 struct FnsStatus {
     #[serde(rename = "sentTimeStamp")]
     sent_timestamp: chrono::DateTime<chrono::Utc>,
@@ -44,7 +43,6 @@ struct Header {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Hash, Eq, PartialEq)]
-#[serde(rename_all = "PascalCase")]
 struct Container {
     #[serde(rename = "MessageType")]
     message_type: u16,

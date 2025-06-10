@@ -35,6 +35,7 @@ pub mod custom {
     }
 }
 
+mod oneofd;
 mod astral;
 // json, theoretically can give tlv but in practice it doesn't give tlv to mere mortals
 // mod beeline;
@@ -161,6 +162,7 @@ impl OfdRegistry {
         ret.add(icom24::Icom24, router).await;
         ret.add(ofd_ru::OfdRu, router).await;
         ret.add(taxcom::Taxcom, router).await;
+        ret.add(oneofd::OneOfd, router).await;
         ret
     }
     pub async fn add(&mut self, ofd: impl Provider + 'static, router: &mut axum::Router<State>) {
