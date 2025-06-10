@@ -1076,7 +1076,7 @@ impl<const N: u16> TryFrom<u16> for Constant<N> {
     }
 }
 
-impl<'de, const N: u16> Visitor<'de> for ConstantVis<N> {
+impl<const N: u16> Visitor<'_> for ConstantVis<N> {
     type Value = Constant<N>;
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(formatter, "the number {N}")

@@ -118,7 +118,7 @@ impl From<LocalTime> for chrono::NaiveDate {
 
 struct LocalTimeVis;
 
-impl<'de> Visitor<'de> for LocalTimeVis {
+impl Visitor<'_> for LocalTimeVis {
     type Value = LocalTime;
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("a local timestamp")
@@ -263,7 +263,7 @@ impl From<u8> for VarFloat {
 
 struct VarFloatVisitor;
 
-impl<'de> Visitor<'de> for VarFloatVisitor {
+impl Visitor<'_> for VarFloatVisitor {
     type Value = VarFloat;
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("a floating-point number")
@@ -590,7 +590,7 @@ impl TlvType for Document {
 }
 
 struct DebugHelper<'a>(&'a [u8], Repr);
-impl<'a> fmt::Debug for DebugHelper<'a> {
+impl fmt::Debug for DebugHelper<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.1 {
             Repr::Int => match u64::from_bytes(self.0.to_vec()) {
