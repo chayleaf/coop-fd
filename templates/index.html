@@ -58,6 +58,25 @@
         }
       }
 
+      const qrReady = result => {
+        console.log('done?', done);
+        if (done) return;
+        if (!result.data) {
+          console.log('no data');
+          return;
+        }
+        {{extra_qr_processing}}
+        const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
+        const selofd = ofd.options.selectedIndex ? ofd.options[ofd.options.selectedIndex].value : null;
+        console.log('username', username);
+        if (username) {
+          done = true;
+          document.cookie = 'username=' + username;
+          console.log('decoded qr code:', result.data)
+          document.location = 'add?' + ((selofd && selofd != 'platforma-ofd') ? ('ofd=' + selofd + '&') : '') + result.data;
+        }
+      };
+
       const updateFns = {
         "default": {
           show: () => {
@@ -65,26 +84,8 @@
             if (!window.qrScanner) {
               window.qrScanner = new QrScanner(
                 video,
-                result => {
-                  console.log('done?', done);
-                  if (done) return;
-                  if (!result.data) {
-                    console.log('no data');
-                    return;
-                  }
-                  {{extra_qr_processing}}
-                  const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
-                  const selofd = ofd.options.selectedIndex ? ofd.options[ofd.options.selectedIndex].value : null;
-                  console.log('username', username);
-                  if (username) {
-                    done = true;
-                    document.cookie = 'username=' + username;
-                    console.log('decoded qr code:', result.data)
-                    document.location = 'add?' + ((selofd && selofd != 'platforma-ofd') ? ('ofd=' + selofd + '&') : '') + result.data;
-                  }
-                }, {
-                returnDetailedScanResult: true,
-              },
+                qrReady,
+                { returnDetailedScanResult: true },
               );
             }
             qrScanner.start();
@@ -137,6 +138,7 @@
 
       let update = () => {
         const username = usersel.options.selectedIndex ? usersel.options[usersel.options.selectedIndex].value : null;
+        if (username) document.cookie = 'username=' + username;
         const selofd = ofd.options.selectedIndex ? ofd.options[ofd.options.selectedIndex].value : null;
         let target = "";
         if (username) target = Object.keys(updateFns).indexOf(selofd) >= 0 ? selofd : "default";
@@ -151,6 +153,24 @@
       ofd.addEventListener('change', update);
       usersel.addEventListener('change', update);
       update();
+
+      /*const qrSelector = document.getElementById('qr-selector');
+      qrSelector.addEventListener('change', event => {
+        const fileList = event.target.files;
+        console.log(fileList);
+      });*/
+      window.addEventListener('paste', event => {
+        const items = event.clipboardData.items;
+        for (const item of items) {
+          if (item.kind !== 'file' || item.type !== 'image/png') continue;
+          console.log(item);
+          const file = item.getAsFile();
+          console.log(file);
+          QrScanner.scanImage(file, { returnDetailedScanResult: true })
+            .then(qrReady)
+            .catch(error => console.error(error));
+        }
+      });
     });
   </script>
 </head>
@@ -170,6 +190,7 @@
       {% endfor %}
       <option value="custom">Добавить платёж вручную</option>
     </select>
+    <!-- <input type="file" id="qr-selector" /> -->
   </form>
   <form id="icom24-form" method="get" action="add" hidden>
     <p>
