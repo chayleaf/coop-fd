@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use fiscal_data::{fields, FieldInternal, Object};
 use serde::Serialize;
 
-use crate::{ofd::custom, parse_sum, Config};
+use crate::{ofd::custom, parse_sum, server::State};
 
 use super::{Error, Provider};
 
@@ -75,7 +75,7 @@ impl Provider for Taxcom {
             .ok_or(Error::MissingData("s"))?;
         Ok(format!("taxcom_{fiscal_sign}_{sum}"))
     }
-    async fn fetch_raw_data(&self, config: &Config, rec: &mut Object) -> Result<Vec<u8>, Error> {
+    async fn fetch_raw_data(&self, state: &State, rec: &mut Object) -> Result<Vec<u8>, Error> {
         let [_, _, a, b, c, d] = rec
             .get::<fields::DocFiscalSign>()?
             .ok_or(Error::MissingData("fp"))?;
@@ -141,13 +141,13 @@ impl Provider for Taxcom {
                 .find(|x| x.id() != self.id());
             x
         } {
-            super::fetch_raw(config, provider, rec, false).await?;
+            super::fetch_raw(state, provider, rec, false).await?;
         }
         Ok(data.to_vec())
     }
     async fn parse(
         &self,
-        config: &Config,
+        state: &State,
         data: &[u8],
         mut rec: Object,
     ) -> Result<fiscal_data::Document, Error> {
@@ -159,7 +159,7 @@ impl Provider for Taxcom {
                 .find(|x| x.id() != self.id());
             x
         } {
-            super::fetch2(config, provider, rec).await
+            super::fetch2(state, provider, rec).await
         } else {
             Err(Error::MissingData("provider"))
         }

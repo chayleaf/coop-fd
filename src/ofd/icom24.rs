@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use fiscal_data::{fields, Object};
 use serde::Deserialize;
 
-use crate::{ofd::custom, parse_qr, Config};
+use crate::{ofd::custom, parse_qr, server::State};
 
 use super::{fill_missing_fields, Error, Provider};
 
@@ -42,7 +42,7 @@ impl Provider for Icom24 {
                 + &code.map(|x| format!("{x:02X}")).join(""),
         )
     }
-    async fn fetch_raw_data(&self, config: &Config, rec: &mut Object) -> Result<Vec<u8>, Error> {
+    async fn fetch_raw_data(&self, state: &State, rec: &mut Object) -> Result<Vec<u8>, Error> {
         let code = rec
             .get::<custom::IcomCode>()?
             .ok_or(Error::MissingData("code"))?;
@@ -76,13 +76,13 @@ impl Provider for Icom24 {
                 .find(|x| x.id() != self.id());
             x
         } {
-            super::fetch_raw(config, provider, rec, false).await?;
+            super::fetch_raw(state, provider, rec, false).await?;
         }
         Ok(ret)
     }
     async fn parse(
         &self,
-        config: &Config,
+        state: &State,
         data: &[u8],
         mut rec: Object,
     ) -> Result<fiscal_data::Document, Error> {
@@ -100,7 +100,7 @@ impl Provider for Icom24 {
                 .find(|x| x.id() != self.id());
             x
         } {
-            super::fetch2(config, provider, rec).await
+            super::fetch2(state, provider, rec).await
         } else {
             Err(Error::MissingData("provider"))
         }

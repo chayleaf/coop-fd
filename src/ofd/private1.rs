@@ -13,7 +13,7 @@ use fiscal_data::{
 use serde::Deserialize;
 
 use super::{Error, Provider};
-use crate::Config;
+use crate::server::State;
 
 pub struct Private1 {
     endpoint: String,
@@ -58,7 +58,7 @@ impl Provider for Private1 {
     }
     async fn fetch_raw_data(
         &self,
-        _config: &Config,
+        _state: &State,
         rec: &mut fiscal_data::Object,
     ) -> Result<Vec<u8>, Error> {
         let drive_num = rec
@@ -106,7 +106,7 @@ impl Provider for Private1 {
     }
     async fn parse(
         &self,
-        _config: &Config,
+        _state: &State,
         data: &[u8],
         _rec: fiscal_data::Object,
     ) -> Result<fiscal_data::Document, Error> {
@@ -161,7 +161,7 @@ impl Provider for Private1 {
 mod test {
     use fiscal_data::Object;
 
-    use crate::{ofd::Provider, Config};
+    use crate::{ofd::Provider, server::State};
 
     #[test]
     fn test() {
@@ -172,7 +172,7 @@ mod test {
         ] {
             tokio_test::block_on(async {
                 super::Private1::new("")
-                    .parse(&Config::default(), s, Object::new())
+                    .parse(&State::default(), s, Object::new())
                     .as_mut()
                     .await
                     .unwrap();

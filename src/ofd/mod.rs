@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, io};
 use thiserror::Error;
 use tokio::sync::OnceCell;
 
-use crate::Config;
+use crate::server::State;
 
 pub mod custom {
     pub enum Id {}
@@ -109,9 +109,10 @@ pub(crate) trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
     fn url(&self) -> &'static str;
     fn exts(&self) -> &'static [&'static str];
+    #[allow(dead_code)]
     fn inn(&self) -> &'static str;
-    async fn fetch_raw_data(&self, config: &Config, rec: &mut Object) -> Result<Vec<u8>, Error>;
-    async fn parse(&self, config: &Config, data: &[u8], rec: Object) -> Result<Document, Error>;
+    async fn fetch_raw_data(&self, state: &State, rec: &mut Object) -> Result<Vec<u8>, Error>;
+    async fn parse(&self, state: &State, data: &[u8], rec: Object) -> Result<Document, Error>;
     fn cache_id(&self, rec: &Object) -> Result<String, Error> {
         let drive_num = rec
             .get::<fields::DriveNum>()?
@@ -121,7 +122,7 @@ pub(crate) trait Provider: Send + Sync {
             .ok_or(Error::MissingData("fd"))?;
         Ok(format!("{drive_num}_{doc_num:07}"))
     }
-    async fn register(&self, router: axum::Router) -> axum::Router {
+    async fn register(&self, router: axum::Router<State>) -> axum::Router<crate::server::State> {
         router
     }
     fn condition(&self, _rec: &Object) -> bool {
@@ -135,7 +136,8 @@ pub struct OfdRegistry {
 }
 
 impl OfdRegistry {
-    pub async fn new(c: &Config, router: &mut axum::Router) -> Self {
+    pub async fn new(state: &State, router: &mut axum::Router<State>) -> Self {
+        let c = &state.config;
         let mut ret = Self {
             by_id: BTreeMap::new(),
             all: Vec::new(),
@@ -161,7 +163,7 @@ impl OfdRegistry {
         ret.add(taxcom::Taxcom, router).await;
         ret
     }
-    pub async fn add(&mut self, ofd: impl Provider + 'static, router: &mut axum::Router) {
+    pub async fn add(&mut self, ofd: impl Provider + 'static, router: &mut axum::Router<State>) {
         let mut tmp = axum::Router::new();
         std::mem::swap(&mut tmp, router);
         *router = ofd.register(tmp).await;
@@ -215,13 +217,13 @@ impl OfdRegistry {
 }
 
 static REG: OnceCell<OfdRegistry> = OnceCell::const_new();
-pub async fn init_registry(config: &'static Config, router: &mut axum::Router) {
-    REG.set(OfdRegistry::new(config, router).await)
+pub async fn init_registry(state: &State, router: &mut axum::Router<State>) {
+    REG.set(OfdRegistry::new(state, router).await)
         .unwrap_or_else(|_| panic!());
 }
 pub async fn registry() -> &'static OfdRegistry {
     REG.get_or_init(|| async {
-        OfdRegistry::new(&Config::default(), &mut axum::Router::new()).await
+        OfdRegistry::new(&State::default(), &mut axum::Router::new()).await
     })
     .await
 }
@@ -234,18 +236,18 @@ pub fn fill_missing_fields(a: &mut Object, b: &Object) {
 }
 
 async fn fetch_raw<P: Provider + ?Sized>(
-    config: &Config,
+    state: &State,
     provider: &P,
     rec: &mut Object,
     force: bool,
 ) -> Result<Vec<u8>, Error> {
     let cache_id = provider.cache_id(rec)?;
-    let mut raw_path = config.data_path("raw");
+    let mut raw_path = state.config.data_path("raw");
     raw_path.push(provider.id());
     let _ = tokio::fs::create_dir_all(&raw_path).await;
     raw_path.push(format!("{cache_id}.{}", provider.exts().first().unwrap()));
     if force || !raw_path.is_file() {
-        let data = provider.fetch_raw_data(config, rec).await?;
+        let data = provider.fetch_raw_data(state, rec).await?;
         log::info!("raw data: {data:?}");
         log::info!("writing {raw_path:?}");
         let _ = tokio::fs::write(&raw_path, &data).await;
@@ -256,31 +258,31 @@ async fn fetch_raw<P: Provider + ?Sized>(
 }
 
 async fn fetch2<P: Provider + ?Sized>(
-    config: &Config,
+    state: &State,
     provider: &P,
     mut rec: Object,
 ) -> Result<Document, Error> {
     let cache_id = provider.cache_id(&rec)?;
-    let path = config.data_path(format!("ffd/{cache_id}.tlv"));
+    let path = state.config.data_path(format!("ffd/{cache_id}.tlv"));
     if let Ok(data) = tokio::fs::read(&path).await {
         if let Ok(doc) = Document::from_bytes(data) {
             return Ok(doc);
         }
     }
-    let mut raw_path = config.data_path("raw");
+    let mut raw_path = state.config.data_path("raw");
     raw_path.push(provider.id());
     let _ = tokio::fs::create_dir_all(&raw_path).await;
     raw_path.push(format!("{cache_id}.{}", provider.exts().first().unwrap()));
     let parsed = if let Ok(x) = tokio::fs::read(&raw_path).await {
-        provider.parse(config, &x, rec.clone()).await.ok()
+        provider.parse(state, &x, rec.clone()).await.ok()
     } else {
         None
     };
     let mut parsed = if let Some(parsed) = parsed {
         parsed
     } else {
-        let data = fetch_raw(config, provider, &mut rec, true).await?;
-        provider.parse(config, &data, rec.clone()).await?
+        let data = fetch_raw(state, provider, &mut rec, true).await?;
+        provider.parse(state, &data, rec.clone()).await?
     };
     fill_missing_fields(parsed.data_mut(), &rec);
     if !path.is_symlink() && !path.is_file() {
@@ -299,13 +301,13 @@ async fn fetch2<P: Provider + ?Sized>(
     }
     Ok(parsed)
 }
-pub(crate) async fn fetch(config: &Config, rec: Object) -> Result<Document, Error> {
+pub(crate) async fn fetch(state: &State, rec: Object) -> Result<Document, Error> {
     let provider = registry()
         .await
         .by_id(&rec.get::<custom::ProviderId>()?.unwrap_or_default(), &rec)
         .next()
         .ok_or(Error::MissingData("provider"))?;
-    let ret = fetch2(config, provider, rec).await?;
+    let ret = fetch2(state, provider, rec).await?;
     let drive_num = ret
         .data()
         .get::<fields::DriveNum>()?
@@ -315,7 +317,7 @@ pub(crate) async fn fetch(config: &Config, rec: Object) -> Result<Document, Erro
         .get::<fields::DocNum>()?
         .ok_or(Error::MissingData("fd"))?;
     let final_cache_id = format!("{drive_num}_{doc_num:07}");
-    let final_path = config.data_path(format!("ffd/{final_cache_id}.tlv"));
+    let final_path = state.config.data_path(format!("ffd/{final_cache_id}.tlv"));
     if !final_path.is_file() {
         let _ = tokio::fs::write(&final_path, &ret.clone().into_bytes()?).await;
     }

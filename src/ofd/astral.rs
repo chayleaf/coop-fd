@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use fiscal_data::{enums, fields, Document, Object, TlvType};
 use serde::Deserialize;
 
-use crate::Config;
+use crate::server::State;
 
 use super::{custom, fill_missing_fields, Error, Provider};
 
@@ -142,7 +142,7 @@ impl Provider for Astral {
     fn inn(&self) -> &'static str {
         "4029017981"
     }
-    async fn fetch_raw_data(&self, config: &Config, rec: &mut Object) -> Result<Vec<u8>, Error> {
+    async fn fetch_raw_data(&self, state: &State, rec: &mut Object) -> Result<Vec<u8>, Error> {
         let drive_num = rec
             .get::<fields::DriveNum>()?
             .ok_or(Error::MissingData("fn"))?;
@@ -189,11 +189,11 @@ impl Provider for Astral {
                 .find(|x| x.id() != self.id());
             x
         } {
-            let _ = super::fetch_raw(config, provider, rec, false).await;
+            let _ = super::fetch_raw(state, provider, rec, false).await;
         }
         Ok(ret)
     }
-    async fn parse(&self, config: &Config, data: &[u8], rec: Object) -> Result<Document, Error> {
+    async fn parse(&self, state: &State, data: &[u8], rec: Object) -> Result<Document, Error> {
         let res = serde_json::from_slice::<Response>(data)?;
         let res = res.result.ok_or(Error::MissingData("result"))?;
         let doc = res.doc.ok_or(Error::MissingData("doc"))?;
@@ -204,7 +204,7 @@ impl Provider for Astral {
                 .find(|x| x.id() != self.id());
             x
         } {
-            super::fetch2(config, provider, rec).await.ok()
+            super::fetch2(state, provider, rec).await.ok()
         } else {
             None
         };

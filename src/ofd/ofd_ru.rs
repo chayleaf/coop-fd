@@ -4,7 +4,7 @@ use fiscal_data::{enums, fields, Ffd, FfdDoc, Object};
 use serde::Deserialize;
 
 use super::{Error, Provider};
-use crate::Config;
+use crate::server::State;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Default, Deserialize, Hash, Eq, PartialEq)]
@@ -570,7 +570,7 @@ impl Provider for OfdRu {
     fn inn(&self) -> &'static str {
         "7841465198"
     }
-    async fn fetch_raw_data(&self, config: &Config, rec: &mut Object) -> Result<Vec<u8>, Error> {
+    async fn fetch_raw_data(&self, state: &State, rec: &mut Object) -> Result<Vec<u8>, Error> {
         let client = reqwest::Client::builder()
             // .user_agent("Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/118.0")
             .cookie_store(true)
@@ -630,13 +630,13 @@ impl Provider for OfdRu {
                 .find(|x| x.id() != self.id());
             x
         } {
-            let _ = super::fetch_raw(config, provider, rec, false).await;
+            let _ = super::fetch_raw(state, provider, rec, false).await;
         }
         Ok(ret)
     }
     async fn parse(
         &self,
-        config: &Config,
+        state: &State,
         data: &[u8],
         rec: Object,
     ) -> Result<fiscal_data::Document, Error> {
@@ -648,7 +648,7 @@ impl Provider for OfdRu {
                 .find(|x| x.id() != self.id());
             x
         } {
-            if let Ok(mut doc) = super::fetch2(config, provider, rec).await {
+            if let Ok(mut doc) = super::fetch2(state, provider, rec).await {
                 if let Ok(fiscal_sign) = <[u8; 6]>::try_from(&res.document.FiscalSign[..])
                     .or_else(|_| <[u8; 6]>::try_from(&res.doc_fiscal_sign[..]))
                 {

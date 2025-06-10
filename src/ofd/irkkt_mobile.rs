@@ -1,6 +1,6 @@
 use std::{io, path::PathBuf, sync::Arc};
 
-use crate::Config;
+use crate::{server::State, Config};
 use async_trait::async_trait;
 use axum::response::IntoResponse;
 use fiscal_data::fields;
@@ -197,7 +197,7 @@ impl IrkktMobile {
             } = client
                 .execute(
                     client
-                        .post(&format!("{}/v2/mobile/users/refresh", self.api_base))
+                        .post(format!("{}/v2/mobile/users/refresh", self.api_base))
                         .header("sessionId", &auth.session_id)
                         .json(&RefreshRequest {
                             client_secret: self.client_secret.clone(),
@@ -308,7 +308,7 @@ impl Provider for IrkktMobile {
     }
     async fn fetch_raw_data(
         &self,
-        _config: &Config,
+        _state: &State,
         rec: &mut fiscal_data::Object,
     ) -> Result<Vec<u8>, Error> {
         let date = rec
@@ -357,14 +357,17 @@ impl Provider for IrkktMobile {
     }
     async fn parse(
         &self,
-        _config: &Config,
+        _state: &State,
         data: &[u8],
         _rec: fiscal_data::Object,
     ) -> Result<fiscal_data::Document, Error> {
         let data: FullTicketResponse = serde_json::from_slice(data)?;
         Ok(data.ticket.document.try_into()?)
     }
-    async fn register(&self, router: axum::Router) -> axum::Router {
+    async fn register(
+        &self,
+        router: axum::Router<crate::server::State>,
+    ) -> axum::Router<crate::server::State> {
         let this = self.clone();
         let parser = liquid::ParserBuilder::with_stdlib()
             .filter(crate::CurrencyFilter)
@@ -533,15 +536,15 @@ impl Provider for IrkktMobile {
 mod test {
     use fiscal_data::{fields, Object};
 
-    use crate::{ofd::Provider, Config};
+    use crate::{ofd::Provider, server::State};
 
     #[test]
     fn test() {
         tokio_test::block_on(async {
-            let cfg = Config::default();
-            let doc = super::IrkktMobile::new(&cfg, "", "", "")
+            let state = State::default();
+            let doc = super::IrkktMobile::new(&state.config, "", "", "")
                 .parse(
-                    &cfg,
+                    &state,
                     include_bytes!("../../test_data/irkkt-mobile1.json"),
                     Object::new(),
                 )
