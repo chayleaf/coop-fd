@@ -108,9 +108,9 @@ impl<T> Default for FileRes<T> {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct State {
-    pub config: Arc<Config>,
+#[derive(Default)]
+pub struct InnerState {
+    pub config: Config,
     pub style: FileRes<String>,
     pub fzf: FileRes<String>,
     pub qr_scanner_worker: FileRes<String>,
@@ -121,15 +121,17 @@ pub struct State {
     pub submitted_t: FileRes<Template>,
     pub add_t: FileRes<Template>,
     pub list_t: FileRes<Template>,
-    pub balance: Arc<RwLock<HashMap<String, i64>>>,
-    pub list: Arc<RwLock<Vec<ListItem>>>,
-    pub commodities: Arc<DashMap<String, Commodity>>,
-    pub comments: Arc<DashMap<String, Comment>>,
-    pub paid_receipts: Arc<DashSet<String>>,
+    pub balance: RwLock<HashMap<String, i64>>,
+    pub list: RwLock<Vec<ListItem>>,
+    pub commodities: DashMap<String, Commodity>,
+    pub comments: DashMap<String, Comment>,
+    pub paid_receipts: DashSet<String>,
 }
 
-impl State {
-    pub async fn new(config: Config) -> Self {
+pub type State = Arc<InnerState>;
+
+impl InnerState {
+    pub async fn new(config: Config) -> Arc<Self> {
         let parser = Arc::new(
             liquid::ParserBuilder::with_stdlib()
                 .filter(CurrencyFilter)
@@ -287,7 +289,7 @@ impl State {
         );
 
         Self {
-            config: config.into(),
+            config,
             style,
             fzf,
             qr_scanner_worker,
@@ -298,12 +300,13 @@ impl State {
             submitted_t,
             add_t,
             list_t,
-            list: list.into(),
-            balance: Arc::new(balance.into()),
-            commodities: commodities.into(),
-            comments: comments.into(),
-            paid_receipts: paid_receipts.into(),
+            list,
+            balance: balance.into(),
+            commodities,
+            comments,
+            paid_receipts,
         }
+        .into()
     }
 }
 

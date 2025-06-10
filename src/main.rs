@@ -525,7 +525,7 @@ async fn main() {
         },
     );
 
-    let (state, ..) = tokio::join!(server::State::new(config.clone()), async {
+    let (state, ..) = tokio::join!(server::InnerState::new(config.clone()), async {
         tokio::fs::create_dir_all(config.data_path("secret"))
             .await
             .unwrap();
