@@ -630,7 +630,7 @@ impl Provider for OfdRu {
                 .find(|x| x.id() != self.id());
             x
         } {
-            let _ = super::fetch_raw(state, provider, rec, false).await;
+            let _ = super::fetch_raw(state, &*provider, rec, false).await;
         }
         Ok(ret)
     }
@@ -648,7 +648,7 @@ impl Provider for OfdRu {
                 .find(|x| x.id() != self.id());
             x
         } {
-            if let Ok(mut doc) = super::fetch2(state, provider, rec).await {
+            if let Ok(mut doc) = super::fetch2(state, &*provider, rec).await {
                 if let Ok(fiscal_sign) = <[u8; 6]>::try_from(&res.document.FiscalSign[..])
                     .or_else(|_| <[u8; 6]>::try_from(&res.doc_fiscal_sign[..]))
                 {

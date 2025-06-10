@@ -141,7 +141,7 @@ impl Provider for Taxcom {
                 .find(|x| x.id() != self.id());
             x
         } {
-            super::fetch_raw(state, provider, rec, false).await?;
+            super::fetch_raw(state, &*provider, rec, false).await?;
         }
         Ok(data.to_vec())
     }
@@ -159,7 +159,7 @@ impl Provider for Taxcom {
                 .find(|x| x.id() != self.id());
             x
         } {
-            super::fetch2(state, provider, rec).await
+            super::fetch2(state, &*provider, rec).await
         } else {
             Err(Error::MissingData("provider"))
         }

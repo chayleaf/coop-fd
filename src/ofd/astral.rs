@@ -189,7 +189,7 @@ impl Provider for Astral {
                 .find(|x| x.id() != self.id());
             x
         } {
-            let _ = super::fetch_raw(state, provider, rec, false).await;
+            let _ = super::fetch_raw(state, &*provider, rec, false).await;
         }
         Ok(ret)
     }
@@ -204,7 +204,7 @@ impl Provider for Astral {
                 .find(|x| x.id() != self.id());
             x
         } {
-            super::fetch2(state, provider, rec).await.ok()
+            super::fetch2(state, &*provider, rec).await.ok()
         } else {
             None
         };

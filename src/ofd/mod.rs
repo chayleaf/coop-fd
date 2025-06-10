@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use fiscal_data::{fields, Document, Object, TlvType};
-use std::{collections::BTreeMap, io};
+use std::{collections::BTreeMap, io, sync::Arc};
 use thiserror::Error;
 use tokio::sync::OnceCell;
 
@@ -131,8 +131,8 @@ pub(crate) trait Provider: Send + Sync {
 }
 
 pub struct OfdRegistry {
-    by_id: BTreeMap<String, Vec<&'static dyn Provider>>,
-    all: Vec<&'static dyn Provider>,
+    by_id: BTreeMap<String, Vec<Arc<dyn Provider>>>,
+    all: Vec<Arc<dyn Provider>>,
 }
 
 impl OfdRegistry {
@@ -167,46 +167,40 @@ impl OfdRegistry {
         let mut tmp = axum::Router::new();
         std::mem::swap(&mut tmp, router);
         *router = ofd.register(tmp).await;
-        let ofd = Box::leak(Box::new(ofd));
-        self.by_id.entry(ofd.id().to_owned()).or_default().push(ofd);
+        let ofd = Arc::new(ofd);
+        self.by_id
+            .entry(ofd.id().to_owned())
+            .or_default()
+            .push(ofd.clone());
         self.all.push(ofd);
     }
-    pub fn default<'a>(
-        &'a self,
-        rec: &'a Object,
-    ) -> impl 'a + Iterator<Item = &'static dyn Provider> {
+    pub fn default<'a>(&'a self, rec: &'a Object) -> impl 'a + Iterator<Item = Arc<dyn Provider>> {
         self.by_id
             .get("private1")
             .into_iter()
             .flatten()
-            .copied()
-            .chain(
-                self.by_id
-                    .get("irkkt-mobile")
-                    .into_iter()
-                    .flatten()
-                    .copied(),
-            )
+            .chain(self.by_id.get("irkkt-mobile").into_iter().flatten())
             .filter(move |x| x.condition(rec))
+            .cloned()
     }
-    pub fn all(&self) -> impl '_ + Iterator<Item = &'static dyn Provider> {
-        self.all.iter().copied()
+    pub fn all(&self) -> impl '_ + Iterator<Item = Arc<dyn Provider>> {
+        self.all.iter().cloned()
     }
     pub fn by_id<'a>(
         &'a self,
         id: &str,
         rec: &'a Object,
-    ) -> impl 'a + Iterator<Item = &'static dyn Provider> {
+    ) -> impl 'a + Iterator<Item = Arc<dyn Provider>> {
         self.by_id
             .get(id)
             .into_iter()
             .flatten()
-            .copied()
+            .cloned()
             .chain(self.default(rec))
-            .chain(self.all.iter().copied())
+            .chain(self.all.iter().cloned())
             .filter(move |x| x.condition(rec))
     }
-    pub fn fill(&self, id: &str, rec: &mut Object) -> fiscal_data::Result<&dyn Provider> {
+    pub fn fill(&self, id: &str, rec: &mut Object) -> fiscal_data::Result<Arc<dyn Provider>> {
         let ofd = self
             .by_id(id, rec)
             .next()
@@ -307,7 +301,7 @@ pub(crate) async fn fetch(state: &State, rec: Object) -> Result<Document, Error>
         .by_id(&rec.get::<custom::ProviderId>()?.unwrap_or_default(), &rec)
         .next()
         .ok_or(Error::MissingData("provider"))?;
-    let ret = fetch2(state, provider, rec).await?;
+    let ret = fetch2(state, &*provider, rec).await?;
     let drive_num = ret
         .data()
         .get::<fields::DriveNum>()?

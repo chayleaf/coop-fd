@@ -76,7 +76,7 @@ impl Provider for Icom24 {
                 .find(|x| x.id() != self.id());
             x
         } {
-            super::fetch_raw(state, provider, rec, false).await?;
+            super::fetch_raw(state, &*provider, rec, false).await?;
         }
         Ok(ret)
     }
@@ -100,7 +100,7 @@ impl Provider for Icom24 {
                 .find(|x| x.id() != self.id());
             x
         } {
-            super::fetch2(state, provider, rec).await
+            super::fetch2(state, &*provider, rec).await
         } else {
             Err(Error::MissingData("provider"))
         }

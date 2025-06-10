@@ -1,6 +1,9 @@
 use std::{io, path::PathBuf, sync::Arc};
 
-use crate::{server::State, Config};
+use crate::{
+    server::{FileRes, State},
+    Config,
+};
 use async_trait::async_trait;
 use axum::response::IntoResponse;
 use fiscal_data::fields;
@@ -369,22 +372,28 @@ impl Provider for IrkktMobile {
         router: axum::Router<crate::server::State>,
     ) -> axum::Router<crate::server::State> {
         let this = self.clone();
-        let parser = liquid::ParserBuilder::with_stdlib()
-            .filter(crate::CurrencyFilter)
-            .filter(crate::CEscapeFilter)
-            .build()
-            .unwrap();
-        let auth_t = Arc::new(
-            parser
-                .parse(
-                    &tokio::fs::read_to_string("templates/irkkt-mobile/auth.html")
-                        .await
-                        .unwrap_or_else(|_| {
-                            include_str!("../../templates/irkkt-mobile/auth.html").to_owned()
-                        }),
-                )
-                .unwrap_or_else(|err| panic!("irkkt_auth:\n{err}")),
+        let parser = Arc::new(
+            liquid::ParserBuilder::with_stdlib()
+                .filter(crate::CurrencyFilter)
+                .filter(crate::CEscapeFilter)
+                .build()
+                .unwrap(),
         );
+        let auth_t = FileRes::new(move || {
+            let parser = parser.clone();
+            async move {
+                parser
+                    .parse(
+                        &tokio::fs::read_to_string("templates/irkkt-mobile/auth.html")
+                            .await
+                            .unwrap_or_else(|_| {
+                                include_str!("../../templates/irkkt-mobile/auth.html").to_owned()
+                            }),
+                    )
+                    .unwrap_or_else(|err| panic!("irkkt_auth:\n{err}"))
+            }
+        })
+        .await;
         router
             .route(
                 "/ofd/irkkt-mobile/auth",
@@ -393,6 +402,8 @@ impl Provider for IrkktMobile {
                     async move {
                         axum::response::Html::from(
                             auth_t
+                                .get()
+                                .await
                                 .render(&liquid::object!({}))
                                 .unwrap_or_else(|err| format!("Error: {err}")),
                         )
